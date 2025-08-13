@@ -1,0 +1,140 @@
+Feature: SQL Calculation of Inventory at Risk with Active Flag in f_inv_movmnt Table
+
+  The system must calculate the summary of financial quantity for inventory at risk, filtered by active flag as 'Y', from the purgo_playground.f_inv_movmnt table in the purgo_databricks Unity Catalog. 
+  The definition of "inventory at risk", grouping dimensions, quantity column, and business logic must be clarified and validated.
+
+  Background:
+    Given the table purgo_playground.f_inv_movmnt exists in the purgo_databricks Unity Catalog
+    And the table contains columns: txn_id, inv_loc, financial_qty, net_qty, expired_qt, item_nbr, unit_cost, uom_rate, plant_loc_cd, inv_stock_reference, stock_type, qty_on_hand, qty_shipped, cancel_dt, flag_active, crt_dt, updt_dt
+    And the flag_active column is used to indicate active records, with 'Y' meaning active
+    And the financial_qty column is used for financial quantity calculations
+    And the definition of "inventory at risk" is not provided and must be clarified
+    And the required grouping dimensions, date filters, and business logic for "at risk" are missing and must be clarified
+
+  Scenario: Error - Missing Definition of Inventory at Risk
+    Given the requirement to calculate "inventory at risk" in f_inv_movmnt
+    When the definition of "inventory at risk" is not provided
+    Then the system must raise an error with message "Definition of 'inventory at risk' is required for calculation"
+
+  Scenario: Error - Missing Active Flag Criteria
+    Given the requirement to filter by "active flag as 'Y'"
+    When it is not specified which column(s) or flags to use for "active"
+    Then the system must raise an error with message "Criteria for 'active flag as Y' must specify the column(s) to filter"
+
+  Scenario: Error - Missing Grouping or Summarization Dimensions
+    Given the requirement to provide a summary of financial quantity
+    When the required grouping or summarization dimensions are not specified
+    Then the system must raise an error with message "Grouping or summarization dimensions must be specified (e.g., by item_nbr, inv_loc, plant_loc_cd)"
+
+  Scenario: Error - Missing Quantity Column Specification
+    Given the requirement to calculate financial quantity
+    When the specific quantity column to use is not specified
+    Then the system must raise an error with message "Financial quantity column must be specified (e.g., financial_qty, net_qty, qty_on_hand)"
+
+  Scenario: Error - Missing Timeframe or Date Filters
+    Given the requirement to calculate inventory at risk
+    When no timeframe or date filters are provided
+    Then the system must raise an error with message "Timeframe or date filters must be specified (e.g., as of crt_dt, updt_dt, or another date column)"
+
+  Scenario: Error - Missing Output Format Specification
+    Given the requirement to return a summary of financial quantity
+    When the expected output format is not specified
+    Then the system must raise an error with message "Expected output format must be specified (single value or breakdown by item/location/etc.)"
+
+  Scenario: Error - Missing Relationship to Other Tables
+    Given the requirement to identify inventory at risk
+    When it is not specified if joins or filters from related tables are required
+    Then the system must raise an error with message "Relationship to other tables must be specified to determine 'at risk' inventory"
+
+  Scenario: Error - Missing Business Logic for At Risk
+    Given the requirement to calculate inventory at risk
+    When the business logic for "at risk" is not provided
+    Then the system must raise an error with message "Business logic for 'at risk' must be specified (e.g., expiry, stock type, location, other attributes)"
+
+  Scenario Outline: Data-driven Validation of Required Information for Inventory at Risk Calculation
+    Given the requirement to calculate inventory at risk in f_inv_movmnt
+    When the <missing_information> is not provided
+    Then the system must raise an error with message "<error_message>"
+
+    Examples:
+      | missing_information                | error_message                                                                                   |
+      | Definition of inventory at risk    | Definition of 'inventory at risk' is required for calculation                                   |
+      | Active flag criteria               | Criteria for 'active flag as Y' must specify the column(s) to filter                            |
+      | Grouping dimensions                | Grouping or summarization dimensions must be specified (e.g., by item_nbr, inv_loc, plant_loc_cd)|
+      | Quantity column specification      | Financial quantity column must be specified (e.g., financial_qty, net_qty, qty_on_hand)         |
+      | Timeframe/date filters             | Timeframe or date filters must be specified (e.g., as of crt_dt, updt_dt, or another date column)|
+      | Output format specification        | Expected output format must be specified (single value or breakdown by item/location/etc.)       |
+      | Relationship to other tables       | Relationship to other tables must be specified to determine 'at risk' inventory                 |
+      | Business logic for at risk         | Business logic for 'at risk' must be specified (e.g., expiry, stock type, location, other attributes)|
+
+  Scenario: Happy Path - All Required Information Provided
+    Given the definition of "inventory at risk" is provided as "inventory records with financial_qty > 0 and expired_qt = 0"
+    And the active flag is specified as flag_active = 'Y'
+    And the required grouping dimension is item_nbr
+    And the financial quantity column is specified as financial_qty
+    And the calculation is to be performed as of the latest updt_dt
+    And the expected output format is a breakdown by item_nbr with total financial_qty
+    And no joins to other tables are required
+    And the business logic for "at risk" is "financial_qty > 0 and expired_qt = 0"
+    When the SQL is executed to calculate inventory at risk
+    Then the output must contain columns: item_nbr, total_financial_qty
+    And only records with flag_active = 'Y', financial_qty > 0, expired_qt = 0, and latest updt_dt are included
+    And the total_financial_qty is the sum of financial_qty for each item_nbr
+
+  Scenario Outline: Error - Invalid Data Values or Formats
+    Given the requirement to filter by flag_active = 'Y'
+    When the flag_active value is <invalid_flag_value>
+    Then the system must raise an error with message "Invalid flag_active value: <invalid_flag_value>. Expected 'Y'."
+
+    Examples:
+      | invalid_flag_value |
+      | N                 |
+      | NULL              |
+      | 1                 |
+      | y                 |
+
+  Scenario Outline: Error - Invalid Financial Quantity Values
+    Given the requirement to calculate financial_qty
+    When the financial_qty value is <invalid_financial_qty>
+    Then the system must raise an error with message "Invalid financial_qty value: <invalid_financial_qty>. Must be a positive double."
+
+    Examples:
+      | invalid_financial_qty |
+      | -10.0                |
+      | NULL                 |
+      | 'abc'                |
+
+  Scenario Outline: Error - Invalid Expired Quantity Values
+    Given the requirement to filter by expired_qt = 0
+    When the expired_qt value is <invalid_expired_qt>
+    Then the system must raise an error with message "Invalid expired_qt value: <invalid_expired_qt>. Must be 0 for at risk inventory."
+
+    Examples:
+      | invalid_expired_qt |
+      | 1                  |
+      | NULL               |
+      | -5                 |
+
+  Scenario: Validation - SQL Output Format
+    Given the SQL is executed to calculate inventory at risk
+    When the output is returned
+    Then the output must be in the format:
+      | item_nbr | total_financial_qty |
+    And total_financial_qty must be a double value with two decimal places
+
+  Scenario: Validation - SQL Data Types
+    Given the SQL is executed to calculate inventory at risk
+    When the output is returned
+    Then the item_nbr column must be string
+    And the total_financial_qty column must be double
+
+  Scenario: Error - No Records Matching Criteria
+    Given the SQL is executed to calculate inventory at risk
+    When no records match the criteria flag_active = 'Y', financial_qty > 0, expired_qt = 0
+    Then the output must be an empty result set
+
+  Scenario: Error - SQL Execution Failure
+    Given the SQL is executed to calculate inventory at risk
+    When the SQL fails to execute due to syntax or connection error
+    Then the system must raise an error with message "SQL execution failed: <error_details>"
+
