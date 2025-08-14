@@ -1,0 +1,179 @@
+Feature: Conversion of Spark SQL notebook logic to PySpark with function inclusion and column comments for Unity Catalog tables
+
+  Background:
+    Given the Unity Catalog is "purgo_databricks"
+    And the Unity Catalog Schema is "purgo_playground"
+    And the notebook widgets are set for target_table_path, partition, table_format, compression, table_name, unity_catalog, environment, project, load_type, view_unity_catalog_name, raw_unity_catalog, raw_unity_catalog_hist, config_unity_catalog, edp_lkp_unity_catalog, dims_unity_catalog
+    And the following tables and their schemas are available:
+      | Table Name                        | Columns (partial)                                                                                           |
+      | f_supplier_invoice                | invc_entry_period, suplr_invc_nbr, vchr_nbr, vchr_line_nbr, fscl_yr_nbr, vchr_type_cd, ...                 |
+      | supplier_invoice                  | src_sys_cd, po_nbr, po_line_nbr, invc_co_amt, invc_txn_amt, invc_txn_type, document_type, ...              |
+      | supplier_invoice_bkp              | src_sys_cd, po_nbr, po_line_nbr, invc_co_amt, invc_txn_amt, invc_txn_type, document_type, ...              |
+      | supplier_invoice_orig             | src_sys_cd, po_nbr, po_line_nbr, invc_co_amt, invc_txn_amt, invc_txn_type, document_type, ...              |
+    And the following functions are referenced in the notebook:
+      | Function Name                |
+      | get_basejob_url              |
+      | read_control_table           |
+      | Functions from ReusableFunctions |
+    And the Spark SQL code is incomplete, especially for the P05 CTE and subsequent logic
+
+  Scenario: Happy path - All required information is provided for conversion
+    Given the full Spark SQL code is available, including all CTEs and final SELECT/INSERT statements
+    And the full definitions of all referenced functions are provided
+    And the expected output table(s) and their schema mapping are defined
+    And the business logic for handling column mismatches is specified
+    And the required column comments and their sources are provided
+    And all notebook widgets and their possible values are defined
+    And the expected data types and transformation rules for all columns are specified
+    And all business rules for filtering, joining, and transforming data are documented
+    And the requirements for partitioning, table format, and compression are specified
+    And the required output format and location are defined
+    When the Spark SQL code is converted to PySpark code
+    Then the PySpark code includes all referenced functions
+    And the PySpark code writes to the correct output table(s) with the correct schema mapping
+    And all columns are handled according to the specified business logic
+    And all required column comments are added to the Unity Catalog table(s)
+    And the output is written with the correct partitioning, format, and compression settings
+    And the output is accessible for downstream processes
+
+  Scenario Outline: Error scenario - Missing required information for conversion
+    Given <missing_info> is not provided
+    When the Spark SQL code is attempted to be converted to PySpark code
+    Then the conversion fails with error message "<error_message>"
+
+    Examples:
+      | missing_info                                      | error_message                                                                                                 |
+      | Full Spark SQL code                               | "Cannot convert to PySpark: Full Spark SQL code is required for accurate conversion."                        |
+      | Definitions of all referenced functions           | "Cannot convert to PySpark: Function definitions (e.g., get_basejob_url, read_control_table) are missing."   |
+      | Output table(s) and schema mapping                | "Cannot convert to PySpark: Output table(s) and schema mapping must be specified."                           |
+      | Business logic for column mismatches              | "Cannot convert to PySpark: Business logic for handling column mismatches is not defined."                   |
+      | Required column comments and sources              | "Cannot convert to PySpark: Required column comments and their sources are missing."                         |
+      | Notebook widget values and definitions            | "Cannot convert to PySpark: Notebook widget values and definitions are required."                            |
+      | Data type transformation rules                    | "Cannot convert to PySpark: Data type transformation rules for columns are missing."                         |
+      | Business rules for filtering/joining/transforming | "Cannot convert to PySpark: Business rules for filtering, joining, or transforming data are incomplete."     |
+      | Partitioning, format, and compression requirements| "Cannot convert to PySpark: Partitioning, format, and compression requirements must be specified."           |
+      | Output format and location                        | "Cannot convert to PySpark: Output format and location are required."                                        |
+
+  Scenario Outline: Data-driven test for column mapping and data type transformation
+    Given the source column "<source_column>" with data type "<source_type>" exists in the SQL output
+    And the target table "<target_table>" expects column "<target_column>" with data type "<target_type>"
+    And the transformation rule is "<transformation_rule>"
+    When the PySpark code is generated
+    Then the column "<source_column>" is mapped to "<target_column>" in "<target_table>" with data type "<target_type>"
+    And the transformation "<transformation_rule>" is applied
+
+    Examples:
+      | source_column      | source_type | target_table         | target_column      | target_type | transformation_rule                |
+      | fscl_yr_nbr        | string      | f_supplier_invoice   | fscl_yr_nbr        | bigint      | cast to bigint                     |
+      | invc_entry_period  | string      | f_supplier_invoice   | invc_entry_period  | timestamp   | cast to timestamp                  |
+      | invc_co_amt        | double      | supplier_invoice     | invc_co_amt        | double      | no transformation                  |
+      | cost_centre_cd     | string      | supplier_invoice     | cost_centre_cd     | bigint      | cast to bigint                     |
+      | inv_line_desc      | string      | supplier_invoice     | inv_line_desc      | string      | no transformation                  |
+
+  Scenario Outline: Data-driven test for column comments
+    Given the column "<column_name>" in table "<table_name>" requires a comment "<comment_text>"
+    When the PySpark code writes to "<table_name>"
+    Then the column "<column_name>" in "<table_name>" has the comment "<comment_text>"
+
+    Examples:
+      | column_name         | table_name           | comment_text                                 |
+      | invc_entry_period   | f_supplier_invoice   | "Invoice entry period in YYYYMM format"      |
+      | suplr_invc_nbr      | f_supplier_invoice   | "Supplier invoice number"                    |
+      | vchr_nbr            | f_supplier_invoice   | "Voucher number"                             |
+      | cost_centre_cd      | supplier_invoice     | "Cost centre code"                           |
+      | inv_line_desc       | supplier_invoice     | "Invoice line description"                   |
+
+  Scenario Outline: Data-driven test for partitioning, format, and compression
+    Given the output table "<table_name>" requires partitioning by "<partition_column>"
+    And the file format is "<file_format>"
+    And the compression is "<compression_type>"
+    When the PySpark code writes the output
+    Then the output is partitioned by "<partition_column>"
+    And the output file format is "<file_format>"
+    And the compression type is "<compression_type>"
+
+    Examples:
+      | table_name           | partition_column     | file_format | compression_type |
+      | f_supplier_invoice   | invc_entry_period    | parquet     | snappy          |
+      | supplier_invoice     | fscl_yr_nbr          | delta       | gzip            |
+      | supplier_invoice_bkp | post_yr_mth_nbr      | parquet     | snappy          |
+
+  Scenario Outline: Data-driven test for widget value impact
+    Given the notebook widget "<widget_name>" is set to "<widget_value>"
+    When the PySpark code executes
+    Then the logic is applied according to "<expected_behavior>"
+
+    Examples:
+      | widget_name         | widget_value | expected_behavior                                      |
+      | load_type           | "full"       | All data is loaded, overwrite mode is used             |
+      | load_type           | "incremental"| Only new data is loaded, append mode is used           |
+      | table_format        | "delta"      | Output is written in Delta format                      |
+      | compression         | "gzip"       | Output files are compressed using gzip                 |
+      | partition           | "fscl_yr_nbr"| Data is partitioned by fiscal year number              |
+
+  Scenario: Error scenario - Column in SQL output does not exist in target table
+    Given the SQL output contains column "columnX"
+    And the target table "f_supplier_invoice" does not have column "columnX"
+    When the PySpark code is generated
+    Then the column "columnX" is dropped from the output
+    And a warning is logged: "Column 'columnX' does not exist in target table 'f_supplier_invoice' and will be dropped."
+
+  Scenario: Error scenario - Column in target table does not exist in SQL output
+    Given the target table "f_supplier_invoice" has column "columnY"
+    And the SQL output does not contain column "columnY"
+    When the PySpark code is generated
+    Then the column "columnY" is added to the output with null values
+    And a warning is logged: "Column 'columnY' does not exist in SQL output and will be added as nulls in 'f_supplier_invoice'."
+
+  Scenario: Error scenario - Data type mismatch between SQL output and target table
+    Given the SQL output column "fscl_yr_nbr" is of type string
+    And the target table "f_supplier_invoice" expects "fscl_yr_nbr" as bigint
+    When the PySpark code is generated
+    Then the column "fscl_yr_nbr" is cast to bigint before writing to "f_supplier_invoice"
+    And a warning is logged: "Data type mismatch for column 'fscl_yr_nbr': casting string to bigint."
+
+  Scenario: Error scenario - Missing column comments
+    Given the required column comments are not provided
+    When the PySpark code writes to Unity Catalog table "f_supplier_invoice"
+    Then the process fails with error message "Column comments are required for Unity Catalog governance."
+
+  Scenario: Error scenario - Missing partitioning, format, or compression settings
+    Given the partitioning, format, or compression settings are not specified
+    When the PySpark code writes the output
+    Then the process fails with error message "Partitioning, format, and compression settings are required for output."
+
+  Scenario: Error scenario - Output format or location not specified
+    Given the output format or location is not specified
+    When the PySpark code writes the output
+    Then the process fails with error message "Output format and location must be specified for data accessibility."
+
+  Scenario: Error scenario - Function logic not included in PySpark code
+    Given the referenced function "get_basejob_url" is not included in the PySpark code
+    When the PySpark code is executed
+    Then the process fails with error message "Function 'get_basejob_url' must be included in the PySpark code."
+
+  Scenario: Error scenario - Incomplete business rules for filtering/joining/transforming
+    Given the business rules for filtering, joining, or transforming data are incomplete
+    When the PySpark code is generated
+    Then the process fails with error message "Complete business rules are required for accurate data processing."
+
+  Scenario: Error scenario - Schema mismatch causes implementation failure
+    Given there is a schema mismatch between SQL output and target table "f_supplier_invoice"
+    When the PySpark code writes the output
+    Then the process fails with error message "Schema mismatch detected: please provide clear mapping rules."
+
+  Scenario: Error scenario - Data type mismatch causes runtime error
+    Given the SQL output column "invc_entry_period" is string
+    And the target table "f_supplier_invoice" expects "invc_entry_period" as timestamp
+    When the PySpark code writes the output without casting
+    Then a runtime error occurs: "Cannot write string to timestamp column 'invc_entry_period'."
+
+  Scenario: Error scenario - Output not accessible for downstream processes
+    Given the output format or location is incorrect
+    When downstream processes attempt to access the output
+    Then the process fails with error message "Output is not accessible: please specify correct format and location."
+
+  Scenario: Error scenario - Widget value not defined
+    Given the notebook widget "table_format" is referenced but not defined
+    When the PySpark code executes
+    Then the process fails with error message "Widget 'table_format' value is required for output configuration."
