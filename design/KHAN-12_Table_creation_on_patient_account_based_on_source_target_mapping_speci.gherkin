@@ -1,0 +1,114 @@
+Feature: Creation of patient_account table from purgo_playground.pa_account source
+
+  The system must create the target table purgo_playground.patient_account with the specified schema, data types, and logic, dropping the table if it already exists. All columns must be created as per requirements, with appropriate comments, validation, and error handling.
+
+  Background:
+    Given the Unity Catalog is "purgo_databricks"
+    And the schema is "purgo_playground"
+    And the source table is "purgo_playground.pa_account"
+    And the target table is "purgo_playground.patient_account"
+    And the following columns and data types are required in patient_account:
+      | Column                     | Data Type  | Nullable | Comment (Required)                |
+      | patient_foundation_shipment| string     | No       | Patient foundation shipment ID     |
+      | prescriber_id              | string     | No       | Prescriber unique identifier       |
+      | prescriber_key             | string     | No       | Prescriber key (external system)   |
+      | patient_sf_id              | string     | No       | Salesforce patient ID              |
+      | service_request_type       | string     | No       | Type of service request            |
+      | case_sf_id                 | string     | No       | Salesforce case ID                 |
+      | account_id                 | string     | No       | Account unique identifier          |
+      | hash_key                   | string     | No       | Row hash key for deduplication     |
+      | last_modified_date         | timestamp  | No       | Last modified timestamp            |
+      | planned_date               | date       | Yes      | Planned date for service           |
+    And the following validation rules apply:
+      | Column                     | Rule                                                                 |
+      | patient_foundation_shipment| Must not be null or empty                                            |
+      | prescriber_id              | Must not be null or empty; must match /^[A-Za-z0-9_-]{6,32}$/        |
+      | prescriber_key             | Must not be null or empty; must match /^[A-Za-z0-9]{8,32}$/          |
+      | patient_sf_id              | Must not be null or empty; must match /^[A-Za-z0-9]{8,32}$/          |
+      | service_request_type       | Must not be null or empty; must be one of [NEW, UPDATE, CLOSE]       |
+      | case_sf_id                 | Must not be null or empty; must match /^[A-Za-z0-9]{8,32}$/          |
+      | account_id                 | Must not be null or empty; must match /^[A-Za-z0-9]{8,32}$/          |
+      | hash_key                   | Must not be null or empty; must be a SHA256 hash of key columns      |
+      | last_modified_date         | Must not be null; must be a valid timestamp                          |
+      | planned_date               | If present, must be a valid date in YYYY-MM-DD format                |
+    And the following error messages must be returned for validation failures:
+      | Condition                                  | Error Message                                         |
+      | Null or empty required field               | "Column <column_name> cannot be null or empty."       |
+      | Invalid format for prescriber_id           | "Invalid prescriber_id format."                       |
+      | Invalid format for prescriber_key          | "Invalid prescriber_key format."                      |
+      | Invalid format for patient_sf_id           | "Invalid patient_sf_id format."                       |
+      | Invalid format for case_sf_id              | "Invalid case_sf_id format."                          |
+      | Invalid format for account_id              | "Invalid account_id format."                          |
+      | Invalid value for service_request_type     | "Invalid service_request_type value."                 |
+      | Invalid hash_key                          | "Invalid hash_key value."                             |
+      | Invalid last_modified_date                 | "Invalid last_modified_date value."                   |
+      | Invalid planned_date                      | "Invalid planned_date value."                         |
+
+  Scenario: Drop and create patient_account table with correct schema and comments
+    Given the patient_account table exists in purgo_playground
+    When the SQL script is executed to drop the table
+    Then the patient_account table should not exist in purgo_playground
+    When the SQL script is executed to create the patient_account table with the specified columns, data types, and comments
+    Then the patient_account table should exist in purgo_playground with the correct schema and column comments
+
+  Scenario Outline: Insert valid data into patient_account table (happy path)
+    Given the patient_account table is empty
+    When a row is inserted with the following values:
+      | patient_foundation_shipment | prescriber_id | prescriber_key | patient_sf_id | service_request_type | case_sf_id | account_id | hash_key | last_modified_date | planned_date |
+      | <patient_foundation_shipment> | <prescriber_id> | <prescriber_key> | <patient_sf_id> | <service_request_type> | <case_sf_id> | <account_id> | <hash_key> | <last_modified_date> | <planned_date> |
+    Then the row should be inserted successfully
+    And all columns should match the inserted values
+    And no error message should be returned
+
+    Examples:
+      | patient_foundation_shipment | prescriber_id | prescriber_key | patient_sf_id | service_request_type | case_sf_id | account_id | hash_key                                                        | last_modified_date     | planned_date  |
+      | SHIP123456                  | PRSC7890      | KEY12345678    | PATSF12345678 | NEW                 | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | 2024-06-01T12:00:00Z  | 2024-06-10    |
+      | SHIP654321                  | PRSC4567      | KEY87654321    | PATSF87654321 | UPDATE              | CASE654321 | ACC654321  | 3c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7af | 2024-06-02T13:00:00Z  |               |
+
+  Scenario Outline: Insert invalid data into patient_account table (error scenarios)
+    Given the patient_account table is empty
+    When a row is inserted with the following values:
+      | patient_foundation_shipment | prescriber_id | prescriber_key | patient_sf_id | service_request_type | case_sf_id | account_id | hash_key | last_modified_date | planned_date |
+      | <patient_foundation_shipment> | <prescriber_id> | <prescriber_key> | <patient_sf_id> | <service_request_type> | <case_sf_id> | <account_id> | <hash_key> | <last_modified_date> | <planned_date> |
+    Then the row should not be inserted
+    And the error message "<error_message>" should be returned
+
+    Examples:
+      | patient_foundation_shipment | prescriber_id | prescriber_key | patient_sf_id | service_request_type | case_sf_id | account_id | hash_key | last_modified_date     | planned_date | error_message                                 |
+      |                            | PRSC7890      | KEY12345678    | PATSF12345678 | NEW                 | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | 2024-06-01T12:00:00Z  | 2024-06-10    | Column patient_foundation_shipment cannot be null or empty. |
+      | SHIP123456                  |               | KEY12345678    | PATSF12345678 | NEW                 | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | 2024-06-01T12:00:00Z  | 2024-06-10    | Column prescriber_id cannot be null or empty.               |
+      | SHIP123456                  | PRSC!@#       | KEY12345678    | PATSF12345678 | NEW                 | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | 2024-06-01T12:00:00Z  | 2024-06-10    | Invalid prescriber_id format.                               |
+      | SHIP123456                  | PRSC7890      | KEY!@#         | PATSF12345678 | NEW                 | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | 2024-06-01T12:00:00Z  | 2024-06-10    | Invalid prescriber_key format.                              |
+      | SHIP123456                  | PRSC7890      | KEY12345678    | PATSF12345678 | INVALID             | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | 2024-06-01T12:00:00Z  | 2024-06-10    | Invalid service_request_type value.                         |
+      | SHIP123456                  | PRSC7890      | KEY12345678    | PATSF12345678 | NEW                 | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | not-a-timestamp        | 2024-06-10    | Invalid last_modified_date value.                           |
+      | SHIP123456                  | PRSC7890      | KEY12345678    | PATSF12345678 | NEW                 | CASE123456 | ACC123456  | 2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae | 2024-06-01T12:00:00Z  | not-a-date    | Invalid planned_date value.                                 |
+
+  Scenario: Validate hash_key generation logic
+    Given a row with patient_foundation_shipment "SHIP123456", prescriber_id "PRSC7890", patient_sf_id "PATSF12345678", account_id "ACC123456"
+    When the hash_key is generated as SHA256(patient_foundation_shipment + prescriber_id + patient_sf_id + account_id)
+    Then the hash_key should be "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+
+  Scenario: Validate planned_date is optional
+    Given a row with all required fields and planned_date is null
+    When the row is inserted into patient_account
+    Then the row should be inserted successfully
+    And planned_date should be null
+
+  Scenario: Validate column comments in patient_account table
+    Given the patient_account table is created
+    When the table schema is inspected
+    Then each column should have the correct comment as specified in the requirements
+
+  Scenario: Validate service_request_type allowed values
+    Given a row with service_request_type "NEW"
+    When the row is inserted
+    Then the row should be inserted successfully
+    Given a row with service_request_type "UPDATE"
+    When the row is inserted
+    Then the row should be inserted successfully
+    Given a row with service_request_type "CLOSE"
+    When the row is inserted
+    Then the row should be inserted successfully
+    Given a row with service_request_type "INVALID"
+    When the row is inserted
+    Then the error message "Invalid service_request_type value." should be returned
