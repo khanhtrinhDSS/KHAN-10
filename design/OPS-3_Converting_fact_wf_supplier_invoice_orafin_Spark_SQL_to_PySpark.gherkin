@@ -1,0 +1,438 @@
+Feature: Spark SQL to PySpark Conversion for Supplier Invoice Pipeline
+
+  The pipeline must convert all Spark SQL logic in the fact_wf_supplier_invoice_orafin.ipynb notebook to PySpark DataFrame API code, including all referenced functions, with full functional equivalence. The solution must support Unity Catalog (purgo_databricks), schema (purgo_playground), and all referenced tables. All business logic, data type mappings, and orchestration must be preserved. Error handling, validation, and parameterization must be robust and explicit.
+
+  Background:
+    Given the Unity Catalog is "purgo_databricks"
+    And the Unity Catalog schema is "purgo_playground"
+    And all referenced tables exist and are accessible
+    And all required widgets are provided at runtime:
+      | widget_name              | required | default_value | allowed_values |
+      | target_table_path        | true     | None          | string         |
+      | partition                | true     | None          | string         |
+      | table_format             | true     | None          | string         |
+      | compression              | true     | None          | string         |
+      | table_name               | true     | None          | string         |
+      | unity_catalog            | true     | None          | string         |
+      | environment              | true     | None          | string         |
+      | project                  | true     | None          | string         |
+      | load_type                | true     | None          | string         |
+      | view_unity_catalog_name  | true     | None          | string         |
+      | raw_unity_catalog        | true     | None          | string         |
+      | raw_unity_catalog_hist   | true     | None          | string         |
+      | config_unity_catalog     | true     | None          | string         |
+      | edp_lkp_unity_catalog    | true     | None          | string         |
+      | dims_unity_catalog       | true     | None          | string         |
+    And all notebook-scoped functions from "ReusableFunctions" and "Constants" are available in PySpark
+    And the control table "config_unity_catalog.cl_control_table" exists with its required schema
+    And all required privileges for Unity Catalog are granted
+    And the Spark configuration "spark.sql.sources.partitionOverwriteMode" is set to "dynamic"
+    And the process is triggered by Databricks job or notebook run
+
+  Scenario: Successful conversion of Spark SQL logic to PySpark DataFrame API
+    Given the full business logic from the notebook is available
+    And all referenced tables and columns exist with the expected schema
+    And all required functions (e.g., get_basejob_url, read_control_table) are implemented in PySpark
+    When the Spark SQL logic is converted to PySpark DataFrame API
+    Then the resulting PySpark code must:
+      And reproduce all CTEs, joins, filters, and transformations using DataFrame API
+      And preserve all column data types and nullability as per target table schema
+      And implement all COALESCE, CASE, and conditional logic using PySpark functions
+      And handle all date formatting and casting using PySpark functions
+      And parameterize all catalog, schema, and table references using widgets
+      And write the final DataFrame to the correct Unity Catalog table with the specified partitioning, format, and compression
+      And overwrite or append as per the process requirements
+      And log job metadata (jobId, jobUrl) using the provided functions
+      And update the control table entry as per business logic
+      And produce output DataFrames/tables that match the original Spark SQL results
+      And pass all acceptance criteria for data equivalence
+
+  Scenario Outline: Data type and nullability mapping validation
+    Given the source Spark SQL column <sql_column> with type <sql_type> and nullability <sql_nullability>
+    When converting to PySpark DataFrame column
+    Then the PySpark column <pyspark_column> must have type <pyspark_type> and nullability <pyspark_nullability>
+    Examples:
+      | sql_column           | sql_type   | sql_nullability | pyspark_column      | pyspark_type | pyspark_nullability |
+      | invc_entry_period    | timestamp  | nullable        | invc_entry_period   | TimestampType| nullable           |
+      | suplr_invc_nbr       | string     | nullable        | suplr_invc_nbr      | StringType    | nullable           |
+      | vchr_nbr             | string     | nullable        | vchr_nbr            | StringType    | nullable           |
+      | fscl_yr_nbr          | bigint     | nullable        | fscl_yr_nbr         | LongType      | nullable           |
+      | invc_co_amt          | double     | nullable        | invc_co_amt         | DoubleType    | nullable           |
+      | cost_centre_cd       | bigint     | nullable        | cost_centre_cd      | LongType      | nullable           |
+      | invc_qty             | double     | nullable        | invc_qty            | DoubleType    | nullable           |
+      | invc_txn_amt         | double     | nullable        | invc_txn_amt        | DoubleType    | nullable           |
+      | inv_line_desc        | string     | nullable        | inv_line_desc       | StringType    | nullable           |
+
+  Scenario Outline: Validation of widget parameterization
+    Given the widget <widget_name> is provided at runtime
+    When the PySpark code accesses the widget value
+    Then the value must be non-null and of type <expected_type>
+    And if the value is missing, the process must fail with error message "Missing required widget: <widget_name>"
+    Examples:
+      | widget_name              | expected_type |
+      | target_table_path        | string        |
+      | partition                | string        |
+      | table_format             | string        |
+      | compression              | string        |
+      | table_name               | string        |
+      | unity_catalog            | string        |
+      | environment              | string        |
+      | project                  | string        |
+      | load_type                | string        |
+      | view_unity_catalog_name  | string        |
+      | raw_unity_catalog        | string        |
+      | raw_unity_catalog_hist   | string        |
+      | config_unity_catalog     | string        |
+      | edp_lkp_unity_catalog    | string        |
+      | dims_unity_catalog       | string        |
+
+  Scenario: Error when required function implementation is missing
+    Given a referenced function from "ReusableFunctions" or "Constants" is not implemented in PySpark
+    When the PySpark code attempts to call the missing function
+    Then the process must fail with error message "Missing function implementation: <function_name>"
+
+  Scenario: Error when referenced table or column is missing
+    Given a referenced table or column does not exist in Unity Catalog
+    When the PySpark code attempts to access the missing table or column
+    Then the process must fail with error message "Missing table or column: <table_or_column_name>"
+
+  Scenario: Error when control table schema is missing or invalid
+    Given the control table "config_unity_catalog.cl_control_table" does not exist or has an invalid schema
+    When the PySpark code attempts to read or update the control table
+    Then the process must fail with error message "Control table missing or invalid schema"
+
+  Scenario: Error when Unity Catalog privileges are insufficient
+    Given the user or service principal does not have required privileges on Unity Catalog or schema
+    When the PySpark code attempts to read or write to a Unity Catalog table
+    Then the process must fail with error message "Insufficient privileges for Unity Catalog operation"
+
+  Scenario: Error when Spark configuration is not set correctly
+    Given the Spark configuration "spark.sql.sources.partitionOverwriteMode" is not set to "dynamic"
+    When the PySpark code attempts to overwrite partitioned tables
+    Then the process must fail with error message "Partition overwrite mode not set to dynamic"
+
+  Scenario: Error when external library or dependency is missing
+    Given a required PySpark or external library is not installed in the Databricks cluster
+    When the PySpark code attempts to import or use the library
+    Then the process must fail with error message "Missing required library: <library_name>"
+
+  Scenario Outline: Data equivalence validation between Spark SQL and PySpark outputs
+    Given the Spark SQL output DataFrame <sql_df> and the PySpark output DataFrame <pyspark_df>
+    When comparing the outputs for row count, column names, and data values
+    Then the outputs must match exactly for:
+      | validation_type | expected_result |
+      | row_count       | equal           |
+      | column_names    | equal           |
+      | data_values     | equal           |
+    Examples:
+      | sql_df         | pyspark_df      |
+      | df_sql         | df_pyspark      |
+      | supplier_invoice_sql | supplier_invoice_pyspark |
+
+  Scenario: Error when SQL construct is not directly mappable to PySpark
+    Given the Spark SQL logic contains a construct not directly supported by PySpark DataFrame API
+    When converting to PySpark
+    Then the process must either:
+      And implement equivalent logic using PySpark UDFs or alternative functions
+      Or fail with error message "SQL construct not mappable to PySpark: <construct_description>"
+
+  Scenario: Error when required widget value is not in allowed set
+    Given a widget value <widget_value> for <widget_name> is not in the allowed set <allowed_values>
+    When the PySpark code validates the widget value
+    Then the process must fail with error message "Invalid widget value for <widget_name>: <widget_value>"
+
+  Scenario: Error when process flow or output table is ambiguous
+    Given the end-to-end process flow or output table is not fully specified
+    When the PySpark code reaches the output stage
+    Then the process must fail with error message "Ambiguous process flow or output table specification"
+
+  Scenario: Error when required parameter is missing in dbutils.widgets.get()
+    Given a required parameter is not supplied at runtime
+    When the PySpark code calls dbutils.widgets.get(<parameter_name>)
+    Then the process must fail with error message "Missing required parameter: <parameter_name>"
+
+  Scenario: Error when writing to Unity Catalog table fails
+    Given the PySpark DataFrame is ready to be written to a Unity Catalog table
+    When the write operation fails due to schema mismatch, partitioning error, or other issue
+    Then the process must fail with error message "Failed to write to Unity Catalog table: <table_name>"
+
+  Scenario: Error when control table update fails
+    Given the process attempts to update the control table entry
+    When the update operation fails
+    Then the process must fail with error message "Failed to update control table entry"
+
+  Scenario: Error when job metadata logging fails
+    Given the process attempts to log job metadata (jobId, jobUrl)
+    When the logging operation fails
+    Then the process must fail with error message "Failed to log job metadata"
+
+  Scenario: Error when required output validation framework is not provided
+    Given the requirements specify a validation or equivalence framework
+    When the PySpark code does not include the required validation logic
+    Then the process must fail with error message "Missing required output validation framework"
+
+  Scenario Outline: Data-driven test for supplier_invoice table write
+    Given the PySpark DataFrame <df_name> with schema matching purgo_playground.supplier_invoice
+    When writing the DataFrame to Unity Catalog table "purgo_playground.supplier_invoice" with partition key <partition_key> and format <table_format>
+    Then the write operation must succeed
+    And the table must contain all expected columns and data types
+    And the partitioning must match <partition_key>
+    And the compression must match <compression>
+    Examples:
+      | df_name                | partition_key | table_format | compression |
+      | supplier_invoice_df    | invc_entry_dt | delta        | snappy      |
+      | supplier_invoice_df    | fscl_yr_nbr   | parquet      | gzip        |
+
+  Scenario Outline: Data-driven test for error scenarios on table write
+    Given the PySpark DataFrame <df_name> with schema not matching purgo_playground.supplier_invoice
+    When writing the DataFrame to Unity Catalog table "purgo_playground.supplier_invoice"
+    Then the process must fail with error message "Schema mismatch for table: purgo_playground.supplier_invoice"
+    Examples:
+      | df_name                |
+      | supplier_invoice_df_bad_schema |
+      | supplier_invoice_df_missing_column |
+
+  Scenario: Error when referenced lookup table is missing
+    Given a lookup table (e.g., edp_lkp_unity_catalog.edp_lkup) is referenced in the logic
+    When the table does not exist in Unity Catalog
+    Then the process must fail with error message "Missing lookup table: <lookup_table_name>"
+
+  Scenario: Error when referenced dimension table is missing
+    Given a dimension table (e.g., dims_unity_catalog.dim_wf_company) is referenced in the logic
+    When the table does not exist in Unity Catalog
+    Then the process must fail with error message "Missing dimension table: <dimension_table_name>"
+
+  Scenario: Error when referenced historical table is missing
+    Given a historical table (e.g., raw_unity_catalog_hist.fnd_flex_values) is referenced in the logic
+    When the table does not exist in Unity Catalog
+    Then the process must fail with error message "Missing historical table: <historical_table_name>"
+
+  Scenario: Error when referenced raw table is missing
+    Given a raw table (e.g., raw_unity_catalog.dw_ap_sla_aging_invoice_ca) is referenced in the logic
+    When the table does not exist in Unity Catalog
+    Then the process must fail with error message "Missing raw table: <raw_table_name>"
+
+  Scenario: Error when referenced column is missing in source table
+    Given a referenced column <column_name> is missing in source table <table_name>
+    When the PySpark code attempts to access the column
+    Then the process must fail with error message "Missing column <column_name> in table <table_name>"
+
+  Scenario: Error when referenced column has unexpected data type
+    Given a referenced column <column_name> in table <table_name> has data type <actual_type> but expected <expected_type>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected data type for column <column_name> in table <table_name>: expected <expected_type>, got <actual_type>"
+
+  Scenario: Error when referenced column has unexpected nullability
+    Given a referenced column <column_name> in table <table_name> has nullability <actual_nullability> but expected <expected_nullability>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected nullability for column <column_name> in table <table_name>: expected <expected_nullability>, got <actual_nullability>"
+
+  Scenario: Error when referenced column has unexpected format
+    Given a referenced column <column_name> in table <table_name> has format <actual_format> but expected <expected_format>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected format for column <column_name> in table <table_name>: expected <expected_format>, got <actual_format>"
+
+  Scenario: Error when referenced column has unexpected value
+    Given a referenced column <column_name> in table <table_name> has value <actual_value> but expected <expected_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected value for column <column_name> in table <table_name>: expected <expected_value>, got <actual_value>"
+
+  Scenario: Error when referenced column has unexpected allowed values
+    Given a referenced column <column_name> in table <table_name> has allowed values <actual_allowed_values> but expected <expected_allowed_values>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected allowed values for column <column_name> in table <table_name>: expected <expected_allowed_values>, got <actual_allowed_values>"
+
+  Scenario: Error when referenced column has unexpected constraints
+    Given a referenced column <column_name> in table <table_name> has constraints <actual_constraints> but expected <expected_constraints>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected constraints for column <column_name> in table <table_name>: expected <expected_constraints>, got <actual_constraints>"
+
+  Scenario: Error when referenced column has unexpected default value
+    Given a referenced column <column_name> in table <table_name> has default value <actual_default_value> but expected <expected_default_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected default value for column <column_name> in table <table_name>: expected <expected_default_value>, got <actual_default_value>"
+
+  Scenario: Error when referenced column has unexpected expression
+    Given a referenced column <column_name> in table <table_name> has expression <actual_expression> but expected <expected_expression>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected expression for column <column_name> in table <table_name>: expected <expected_expression>, got <actual_expression>"
+
+  Scenario: Error when referenced column has unexpected transformation
+    Given a referenced column <column_name> in table <table_name> has transformation <actual_transformation> but expected <expected_transformation>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected transformation for column <column_name> in table <table_name>: expected <expected_transformation>, got <actual_transformation>"
+
+  Scenario: Error when referenced column has unexpected join condition
+    Given a referenced column <column_name> in table <table_name> has join condition <actual_join_condition> but expected <expected_join_condition>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected join condition for column <column_name> in table <table_name>: expected <expected_join_condition>, got <actual_join_condition>"
+
+  Scenario: Error when referenced column has unexpected filter condition
+    Given a referenced column <column_name> in table <table_name> has filter condition <actual_filter_condition> but expected <expected_filter_condition>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected filter condition for column <column_name> in table <table_name>: expected <expected_filter_condition>, got <actual_filter_condition>"
+
+  Scenario: Error when referenced column has unexpected aggregation
+    Given a referenced column <column_name> in table <table_name> has aggregation <actual_aggregation> but expected <expected_aggregation>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected aggregation for column <column_name> in table <table_name>: expected <expected_aggregation>, got <actual_aggregation>"
+
+  Scenario: Error when referenced column has unexpected window function
+    Given a referenced column <column_name> in table <table_name> has window function <actual_window_function> but expected <expected_window_function>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected window function for column <column_name> in table <table_name>: expected <expected_window_function>, got <actual_window_function>"
+
+  Scenario: Error when referenced column has unexpected order by
+    Given a referenced column <column_name> in table <table_name> has order by <actual_order_by> but expected <expected_order_by>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected order by for column <column_name> in table <table_name>: expected <expected_order_by>, got <actual_order_by>"
+
+  Scenario: Error when referenced column has unexpected group by
+    Given a referenced column <column_name> in table <table_name> has group by <actual_group_by> but expected <expected_group_by>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected group by for column <column_name> in table <table_name>: expected <expected_group_by>, got <actual_group_by>"
+
+  Scenario: Error when referenced column has unexpected having condition
+    Given a referenced column <column_name> in table <table_name> has having condition <actual_having_condition> but expected <expected_having_condition>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected having condition for column <column_name> in table <table_name>: expected <expected_having_condition>, got <actual_having_condition>"
+
+  Scenario: Error when referenced column has unexpected limit
+    Given a referenced column <column_name> in table <table_name> has limit <actual_limit> but expected <expected_limit>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected limit for column <column_name> in table <table_name>: expected <expected_limit>, got <actual_limit>"
+
+  Scenario: Error when referenced column has unexpected offset
+    Given a referenced column <column_name> in table <table_name> has offset <actual_offset> but expected <expected_offset>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected offset for column <column_name> in table <table_name>: expected <expected_offset>, got <actual_offset>"
+
+  Scenario: Error when referenced column has unexpected distinct
+    Given a referenced column <column_name> in table <table_name> has distinct <actual_distinct> but expected <expected_distinct>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected distinct for column <column_name> in table <table_name>: expected <expected_distinct>, got <actual_distinct>"
+
+  Scenario: Error when referenced column has unexpected union
+    Given a referenced column <column_name> in table <table_name> has union <actual_union> but expected <expected_union>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected union for column <column_name> in table <table_name>: expected <expected_union>, got <actual_union>"
+
+  Scenario: Error when referenced column has unexpected intersect
+    Given a referenced column <column_name> in table <table_name> has intersect <actual_intersect> but expected <expected_intersect>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected intersect for column <column_name> in table <table_name>: expected <expected_intersect>, got <actual_intersect>"
+
+  Scenario: Error when referenced column has unexpected except
+    Given a referenced column <column_name> in table <table_name> has except <actual_except> but expected <expected_except>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected except for column <column_name> in table <table_name>: expected <expected_except>, got <actual_except>"
+
+  Scenario: Error when referenced column has unexpected subquery
+    Given a referenced column <column_name> in table <table_name> has subquery <actual_subquery> but expected <expected_subquery>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected subquery for column <column_name> in table <table_name>: expected <expected_subquery>, got <actual_subquery>"
+
+  Scenario: Error when referenced column has unexpected CTE
+    Given a referenced column <column_name> in table <table_name> has CTE <actual_cte> but expected <expected_cte>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected CTE for column <column_name> in table <table_name>: expected <expected_cte>, got <actual_cte>"
+
+  Scenario: Error when referenced column has unexpected alias
+    Given a referenced column <column_name> in table <table_name> has alias <actual_alias> but expected <expected_alias>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected alias for column <column_name> in table <table_name>: expected <expected_alias>, got <actual_alias>"
+
+  Scenario: Error when referenced column has unexpected expression alias
+    Given a referenced column <column_name> in table <table_name> has expression alias <actual_expression_alias> but expected <expected_expression_alias>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected expression alias for column <column_name> in table <table_name>: expected <expected_expression_alias>, got <actual_expression_alias>"
+
+  Scenario: Error when referenced column has unexpected derived column
+    Given a referenced column <column_name> in table <table_name> has derived column <actual_derived_column> but expected <expected_derived_column>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected derived column for column <column_name> in table <table_name>: expected <expected_derived_column>, got <actual_derived_column>"
+
+  Scenario: Error when referenced column has unexpected calculated column
+    Given a referenced column <column_name> in table <table_name> has calculated column <actual_calculated_column> but expected <expected_calculated_column>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected calculated column for column <column_name> in table <table_name>: expected <expected_calculated_column>, got <actual_calculated_column>"
+
+  Scenario: Error when referenced column has unexpected constant value
+    Given a referenced column <column_name> in table <table_name> has constant value <actual_constant_value> but expected <expected_constant_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected constant value for column <column_name> in table <table_name>: expected <expected_constant_value>, got <actual_constant_value>"
+
+  Scenario: Error when referenced column has unexpected literal value
+    Given a referenced column <column_name> in table <table_name> has literal value <actual_literal_value> but expected <expected_literal_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected literal value for column <column_name> in table <table_name>: expected <expected_literal_value>, got <actual_literal_value>"
+
+  Scenario: Error when referenced column has unexpected function call
+    Given a referenced column <column_name> in table <table_name> has function call <actual_function_call> but expected <expected_function_call>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected function call for column <column_name> in table <table_name>: expected <expected_function_call>, got <actual_function_call>"
+
+  Scenario: Error when referenced column has unexpected parameterization
+    Given a referenced column <column_name> in table <table_name> has parameterization <actual_parameterization> but expected <expected_parameterization>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected parameterization for column <column_name> in table <table_name>: expected <expected_parameterization>, got <actual_parameterization>"
+
+  Scenario: Error when referenced column has unexpected dynamic value
+    Given a referenced column <column_name> in table <table_name> has dynamic value <actual_dynamic_value> but expected <expected_dynamic_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected dynamic value for column <column_name> in table <table_name>: expected <expected_dynamic_value>, got <actual_dynamic_value>"
+
+  Scenario: Error when referenced column has unexpected static value
+    Given a referenced column <column_name> in table <table_name> has static value <actual_static_value> but expected <expected_static_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected static value for column <column_name> in table <table_name>: expected <expected_static_value>, got <actual_static_value>"
+
+  Scenario: Error when referenced column has unexpected runtime value
+    Given a referenced column <column_name> in table <table_name> has runtime value <actual_runtime_value> but expected <expected_runtime_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected runtime value for column <column_name> in table <table_name>: expected <expected_runtime_value>, got <actual_runtime_value>"
+
+  Scenario: Error when referenced column has unexpected compile-time value
+    Given a referenced column <column_name> in table <table_name> has compile-time value <actual_compile_time_value> but expected <expected_compile_time_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected compile-time value for column <column_name> in table <table_name>: expected <expected_compile_time_value>, got <actual_compile_time_value>"
+
+  Scenario: Error when referenced column has unexpected environment variable
+    Given a referenced column <column_name> in table <table_name> has environment variable <actual_env_var> but expected <expected_env_var>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected environment variable for column <column_name> in table <table_name>: expected <expected_env_var>, got <actual_env_var>"
+
+  Scenario: Error when referenced column has unexpected widget value
+    Given a referenced column <column_name> in table <table_name> has widget value <actual_widget_value> but expected <expected_widget_value>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected widget value for column <column_name> in table <table_name>: expected <expected_widget_value>, got <actual_widget_value>"
+
+  Scenario: Error when referenced column has unexpected job metadata
+    Given a referenced column <column_name> in table <table_name> has job metadata <actual_job_metadata> but expected <expected_job_metadata>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected job metadata for column <column_name> in table <table_name>: expected <expected_job_metadata>, got <actual_job_metadata>"
+
+  Scenario: Error when referenced column has unexpected control table entry
+    Given a referenced column <column_name> in table <table_name> has control table entry <actual_control_table_entry> but expected <expected_control_table_entry>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected control table entry for column <column_name> in table <table_name>: expected <expected_control_table_entry>, got <actual_control_table_entry>"
+
+  Scenario: Error when referenced column has unexpected orchestration
+    Given a referenced column <column_name> in table <table_name> has orchestration <actual_orchestration> but expected <expected_orchestration>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected orchestration for column <column_name> in table <table_name>: expected <expected_orchestration>, got <actual_orchestration>"
+
+  Scenario: Error when referenced column has unexpected scheduling
+    Given a referenced column <column_name> in table <table_name> has scheduling <actual_scheduling> but expected <expected_scheduling>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected scheduling for column <column_name> in table <table_name>: expected <expected_scheduling>, got <actual_scheduling>"
+
+  Scenario: Error when referenced column has unexpected output structure
+    Given a referenced column <column_name> in table <table_name> has output structure <actual_output_structure> but expected <expected_output_structure>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected output structure for column <column_name> in table <table_name>: expected <expected_output_structure>, got <actual_output_structure>"
+
+  Scenario: Error when referenced column has unexpected validation framework
+    Given a referenced column <column_name> in table <table_name> has validation framework <actual_validation_framework> but expected <expected_validation_framework>
+    When the PySpark code attempts to use the column
+    Then the process must fail with error message "Unexpected validation framework for column <column_name> in table <table_name>: expected <expected_validation_framework>, got <actual_validation_framework>"
