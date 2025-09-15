@@ -1,140 +1,136 @@
-Feature: SQL Calculation of Inventory at Risk with Active Flag in f_inv_movmnt Table
+Feature: Calculate Inventory at Risk with Active Flag in f_inv_movmnt Table
 
-  The system must calculate the summary of financial quantity for inventory at risk, filtered by active flag as 'Y', from the purgo_playground.f_inv_movmnt table in the purgo_databricks Unity Catalog. 
-  The definition of "inventory at risk", grouping dimensions, quantity column, and business logic must be clarified and validated.
+  This feature specifies the requirements for calculating the inventory at risk, defined as the sum of financial_qty for records in the purgo_playground.f_inv_movmnt table where flag_active = 'Y'. The calculation must be performed in SQL, with strict validation of input data and error handling for invalid or missing values.
 
   Background:
-    Given the table purgo_playground.f_inv_movmnt exists in the purgo_databricks Unity Catalog
-    And the table contains columns: txn_id, inv_loc, financial_qty, net_qty, expired_qt, item_nbr, unit_cost, uom_rate, plant_loc_cd, inv_stock_reference, stock_type, qty_on_hand, qty_shipped, cancel_dt, flag_active, crt_dt, updt_dt
-    And the flag_active column is used to indicate active records, with 'Y' meaning active
-    And the financial_qty column is used for financial quantity calculations
-    And the definition of "inventory at risk" is not provided and must be clarified
-    And the required grouping dimensions, date filters, and business logic for "at risk" are missing and must be clarified
+    Given the Unity Catalog is "purgo_databricks"
+    And the Schema is "purgo_playground"
+    And the table "f_inv_movmnt" contains columns:
+      | txn_id           | string   | nullable |
+      | inv_loc          | string   | nullable |
+      | financial_qty    | double   | nullable |
+      | net_qty          | double   | nullable |
+      | expired_qt       | decimal  | nullable |
+      | item_nbr         | string   | nullable |
+      | unit_cost        | double   | nullable |
+      | uom_rate         | double   | nullable |
+      | plant_loc_cd     | string   | nullable |
+      | inv_stock_reference | string | nullable |
+      | stock_type       | string   | nullable |
+      | qty_on_hand      | double   | nullable |
+      | qty_shipped      | double   | nullable |
+      | cancel_dt        | decimal  | nullable |
+      | flag_active      | string   | nullable |
+      | crt_dt           | timestamp| nullable |
+      | updt_dt          | timestamp| nullable |
 
-  Scenario: Error - Missing Definition of Inventory at Risk
-    Given the requirement to calculate "inventory at risk" in f_inv_movmnt
-    When the definition of "inventory at risk" is not provided
-    Then the system must raise an error with message "Definition of 'inventory at risk' is required for calculation"
+  # Happy Path: Calculate inventory at risk for active records
 
-  Scenario: Error - Missing Active Flag Criteria
-    Given the requirement to filter by "active flag as 'Y'"
-    When it is not specified which column(s) or flags to use for "active"
-    Then the system must raise an error with message "Criteria for 'active flag as Y' must specify the column(s) to filter"
+  Scenario: Calculate total inventory at risk for active records
+    Given the f_inv_movmnt table contains records with flag_active = 'Y'
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then the result should be the total financial_qty of all active records
+    And the result should be a single numeric value
+    And only records with flag_active = 'Y' are included in the calculation
 
-  Scenario: Error - Missing Grouping or Summarization Dimensions
-    Given the requirement to provide a summary of financial quantity
-    When the required grouping or summarization dimensions are not specified
-    Then the system must raise an error with message "Grouping or summarization dimensions must be specified (e.g., by item_nbr, inv_loc, plant_loc_cd)"
+  # Data-driven test: Calculate inventory at risk grouped by item_nbr
 
-  Scenario: Error - Missing Quantity Column Specification
-    Given the requirement to calculate financial quantity
-    When the specific quantity column to use is not specified
-    Then the system must raise an error with message "Financial quantity column must be specified (e.g., financial_qty, net_qty, qty_on_hand)"
-
-  Scenario: Error - Missing Timeframe or Date Filters
-    Given the requirement to calculate inventory at risk
-    When no timeframe or date filters are provided
-    Then the system must raise an error with message "Timeframe or date filters must be specified (e.g., as of crt_dt, updt_dt, or another date column)"
-
-  Scenario: Error - Missing Output Format Specification
-    Given the requirement to return a summary of financial quantity
-    When the expected output format is not specified
-    Then the system must raise an error with message "Expected output format must be specified (single value or breakdown by item/location/etc.)"
-
-  Scenario: Error - Missing Relationship to Other Tables
-    Given the requirement to identify inventory at risk
-    When it is not specified if joins or filters from related tables are required
-    Then the system must raise an error with message "Relationship to other tables must be specified to determine 'at risk' inventory"
-
-  Scenario: Error - Missing Business Logic for At Risk
-    Given the requirement to calculate inventory at risk
-    When the business logic for "at risk" is not provided
-    Then the system must raise an error with message "Business logic for 'at risk' must be specified (e.g., expiry, stock type, location, other attributes)"
-
-  Scenario Outline: Data-driven Validation of Required Information for Inventory at Risk Calculation
-    Given the requirement to calculate inventory at risk in f_inv_movmnt
-    When the <missing_information> is not provided
-    Then the system must raise an error with message "<error_message>"
+  Scenario Outline: Calculate inventory at risk for active records grouped by item_nbr
+    Given the f_inv_movmnt table contains records with flag_active = '<flag_active>' and item_nbr = '<item_nbr>'
+    When the SQL query is executed to sum financial_qty for all records where flag_active = '<flag_active>' grouped by item_nbr
+    Then the result should be the total financial_qty for item_nbr = '<item_nbr>' where flag_active = '<flag_active>'
+    And only records with flag_active = '<flag_active>' are included in the calculation
 
     Examples:
-      | missing_information                | error_message                                                                                   |
-      | Definition of inventory at risk    | Definition of 'inventory at risk' is required for calculation                                   |
-      | Active flag criteria               | Criteria for 'active flag as Y' must specify the column(s) to filter                            |
-      | Grouping dimensions                | Grouping or summarization dimensions must be specified (e.g., by item_nbr, inv_loc, plant_loc_cd)|
-      | Quantity column specification      | Financial quantity column must be specified (e.g., financial_qty, net_qty, qty_on_hand)         |
-      | Timeframe/date filters             | Timeframe or date filters must be specified (e.g., as of crt_dt, updt_dt, or another date column)|
-      | Output format specification        | Expected output format must be specified (single value or breakdown by item/location/etc.)       |
-      | Relationship to other tables       | Relationship to other tables must be specified to determine 'at risk' inventory                 |
-      | Business logic for at risk         | Business logic for 'at risk' must be specified (e.g., expiry, stock type, location, other attributes)|
+      | flag_active | item_nbr | financial_qty |
+      | Y           | ITEM001  | 100.0         |
+      | Y           | ITEM002  | 250.5         |
+      | Y           | ITEM003  | 0.0           |
 
-  Scenario: Happy Path - All Required Information Provided
-    Given the definition of "inventory at risk" is provided as "inventory records with financial_qty > 0 and expired_qt = 0"
-    And the active flag is specified as flag_active = 'Y'
-    And the required grouping dimension is item_nbr
-    And the financial quantity column is specified as financial_qty
-    And the calculation is to be performed as of the latest updt_dt
-    And the expected output format is a breakdown by item_nbr with total financial_qty
-    And no joins to other tables are required
-    And the business logic for "at risk" is "financial_qty > 0 and expired_qt = 0"
-    When the SQL is executed to calculate inventory at risk
-    Then the output must contain columns: item_nbr, total_financial_qty
-    And only records with flag_active = 'Y', financial_qty > 0, expired_qt = 0, and latest updt_dt are included
-    And the total_financial_qty is the sum of financial_qty for each item_nbr
+  # Error Scenario: No active records
 
-  Scenario Outline: Error - Invalid Data Values or Formats
-    Given the requirement to filter by flag_active = 'Y'
-    When the flag_active value is <invalid_flag_value>
-    Then the system must raise an error with message "Invalid flag_active value: <invalid_flag_value>. Expected 'Y'."
+  Scenario: No active records in f_inv_movmnt
+    Given the f_inv_movmnt table contains no records with flag_active = 'Y'
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then the result should be 0
+    And the output should indicate "No active inventory at risk found"
+
+  # Error Scenario: financial_qty is NULL
+
+  Scenario Outline: financial_qty is NULL for active records
+    Given the f_inv_movmnt table contains records with flag_active = 'Y' and financial_qty = <financial_qty>
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then NULL values in financial_qty should be treated as 0 in the sum
+    And the result should be the sum of non-NULL financial_qty values
 
     Examples:
-      | invalid_flag_value |
-      | N                 |
-      | NULL              |
-      | 1                 |
-      | y                 |
+      | financial_qty |
+      | NULL          |
+      | 50.0          |
+      | 0.0           |
 
-  Scenario Outline: Error - Invalid Financial Quantity Values
-    Given the requirement to calculate financial_qty
-    When the financial_qty value is <invalid_financial_qty>
-    Then the system must raise an error with message "Invalid financial_qty value: <invalid_financial_qty>. Must be a positive double."
+  # Validation Rule: flag_active must be 'Y' (case-sensitive)
 
-    Examples:
-      | invalid_financial_qty |
-      | -10.0                |
-      | NULL                 |
-      | 'abc'                |
-
-  Scenario Outline: Error - Invalid Expired Quantity Values
-    Given the requirement to filter by expired_qt = 0
-    When the expired_qt value is <invalid_expired_qt>
-    Then the system must raise an error with message "Invalid expired_qt value: <invalid_expired_qt>. Must be 0 for at risk inventory."
+  Scenario Outline: Validate flag_active value
+    Given the f_inv_movmnt table contains records with flag_active = '<flag_active>'
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then only records with flag_active exactly equal to 'Y' (case-sensitive) are included
+    And records with flag_active = '<flag_active>' are excluded if not exactly 'Y'
 
     Examples:
-      | invalid_expired_qt |
-      | 1                  |
-      | NULL               |
-      | -5                 |
+      | flag_active |
+      | Y           |
+      | y           |
+      | N           |
+      | NULL        |
 
-  Scenario: Validation - SQL Output Format
-    Given the SQL is executed to calculate inventory at risk
-    When the output is returned
-    Then the output must be in the format:
-      | item_nbr | total_financial_qty |
-    And total_financial_qty must be a double value with two decimal places
+  # Error Scenario: Invalid financial_qty values
 
-  Scenario: Validation - SQL Data Types
-    Given the SQL is executed to calculate inventory at risk
-    When the output is returned
-    Then the item_nbr column must be string
-    And the total_financial_qty column must be double
+  Scenario Outline: Invalid financial_qty values
+    Given the f_inv_movmnt table contains records with flag_active = 'Y' and financial_qty = <financial_qty>
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then if financial_qty is negative, the record is included in the sum
+    And if financial_qty is NULL, it is treated as 0
+    And the result should be the sum of all valid financial_qty values
 
-  Scenario: Error - No Records Matching Criteria
-    Given the SQL is executed to calculate inventory at risk
-    When no records match the criteria flag_active = 'Y', financial_qty > 0, expired_qt = 0
-    Then the output must be an empty result set
+    Examples:
+      | financial_qty |
+      | -10.0         |
+      | 0.0           |
+      | 100.0         |
+      | NULL          |
 
-  Scenario: Error - SQL Execution Failure
-    Given the SQL is executed to calculate inventory at risk
-    When the SQL fails to execute due to syntax or connection error
-    Then the system must raise an error with message "SQL execution failed: <error_details>"
+  # Output Format Validation
+
+  Scenario: Validate output format of inventory at risk summary
+    Given the SQL query is executed to calculate inventory at risk
+    When the result is returned
+    Then the output should contain the following columns:
+      | item_nbr      | string  |
+      | total_financial_qty | double |
+    And the total_financial_qty should be the sum of financial_qty for each item_nbr where flag_active = 'Y'
+    And the output should be ordered by item_nbr ascending
+
+  # Error Scenario: Missing required columns
+
+  Scenario: Missing financial_qty column in f_inv_movmnt
+    Given the f_inv_movmnt table does not contain the financial_qty column
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then an error message "Column financial_qty not found in f_inv_movmnt" should be returned
+
+  # Error Scenario: Invalid data type for financial_qty
+
+  Scenario: financial_qty column contains non-numeric values
+    Given the f_inv_movmnt table contains records where financial_qty is not a numeric value
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then an error message "Invalid data type for financial_qty: expected numeric" should be returned
+
+  # Validation Rule: financial_qty must be numeric and non-nullable for calculation
+
+  Scenario: Validate financial_qty data type and nullability
+    Given the f_inv_movmnt table contains records with financial_qty values
+    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
+    Then only numeric values are included in the sum
+    And NULL values are treated as 0
+    And non-numeric values cause an error
 
