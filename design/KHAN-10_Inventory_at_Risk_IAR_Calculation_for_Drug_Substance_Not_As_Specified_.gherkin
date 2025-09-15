@@ -1,136 +1,158 @@
 Feature: Calculate Inventory at Risk with Active Flag in f_inv_movmnt Table
 
-  This feature specifies the requirements for calculating the inventory at risk, defined as the sum of financial_qty for records in the purgo_playground.f_inv_movmnt table where flag_active = 'Y'. The calculation must be performed in SQL, with strict validation of input data and error handling for invalid or missing values.
+  This feature provides the technical specification for calculating the inventory at risk, defined as the sum of financial_qty for records in the purgo_playground.f_inv_movmnt table where flag_active = 'Y'. The calculation is performed as a summary (total) and may be grouped by item_nbr and/or inv_loc if required. The feature includes validation rules, error handling, and data-driven scenarios.
 
   Background:
     Given the Unity Catalog is "purgo_databricks"
     And the Schema is "purgo_playground"
-    And the table "f_inv_movmnt" contains columns:
-      | txn_id           | string   | nullable |
-      | inv_loc          | string   | nullable |
-      | financial_qty    | double   | nullable |
-      | net_qty          | double   | nullable |
-      | expired_qt       | decimal  | nullable |
-      | item_nbr         | string   | nullable |
-      | unit_cost        | double   | nullable |
-      | uom_rate         | double   | nullable |
-      | plant_loc_cd     | string   | nullable |
-      | inv_stock_reference | string | nullable |
-      | stock_type       | string   | nullable |
-      | qty_on_hand      | double   | nullable |
-      | qty_shipped      | double   | nullable |
-      | cancel_dt        | decimal  | nullable |
-      | flag_active      | string   | nullable |
-      | crt_dt           | timestamp| nullable |
-      | updt_dt          | timestamp| nullable |
+    And the table "f_inv_movmnt" exists with columns:
+      | txn_id | inv_loc | financial_qty | net_qty | expired_qt | item_nbr | unit_cost | uom_rate | plant_loc_cd | inv_stock_reference | stock_type | qty_on_hand | qty_shipped | cancel_dt | flag_active | crt_dt | updt_dt |
+    And the column "flag_active" contains values 'Y' or 'N'
+    And the column "financial_qty" is of type double and may be null
 
-  # Happy Path: Calculate inventory at risk for active records
+  # Happy Path: Calculate total inventory at risk for active records
+  Scenario: Calculate total financial quantity for active inventory at risk
+    Given there are records in "f_inv_movmnt" with flag_active = 'Y'
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the result should be the total financial_qty for all active records
+    And the result should exclude records where flag_active != 'Y'
+    And the result should exclude records where financial_qty is null
 
-  Scenario: Calculate total inventory at risk for active records
-    Given the f_inv_movmnt table contains records with flag_active = 'Y'
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then the result should be the total financial_qty of all active records
-    And the result should be a single numeric value
-    And only records with flag_active = 'Y' are included in the calculation
+  # Grouped Summary: By item_nbr and inv_loc
+  Scenario: Calculate inventory at risk grouped by item_nbr and inv_loc
+    Given there are records in "f_inv_movmnt" with flag_active = 'Y'
+    When the SQL is executed to sum financial_qty grouped by item_nbr and inv_loc where flag_active = 'Y'
+    Then the result should include columns: item_nbr, inv_loc, total_financial_qty
+    And each group should only include records with flag_active = 'Y'
+    And records with financial_qty as null should be excluded from the sum
 
-  # Data-driven test: Calculate inventory at risk grouped by item_nbr
-
-  Scenario Outline: Calculate inventory at risk for active records grouped by item_nbr
-    Given the f_inv_movmnt table contains records with flag_active = '<flag_active>' and item_nbr = '<item_nbr>'
-    When the SQL query is executed to sum financial_qty for all records where flag_active = '<flag_active>' grouped by item_nbr
-    Then the result should be the total financial_qty for item_nbr = '<item_nbr>' where flag_active = '<flag_active>'
-    And only records with flag_active = '<flag_active>' are included in the calculation
+  # Validation: flag_active value
+  Scenario Outline: Validate flag_active value for inventory at risk calculation
+    Given a record in "f_inv_movmnt" with flag_active = <flag_active>
+    And financial_qty = <financial_qty>
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the record should <include_exclude> in the calculation
 
     Examples:
-      | flag_active | item_nbr | financial_qty |
-      | Y           | ITEM001  | 100.0         |
-      | Y           | ITEM002  | 250.5         |
-      | Y           | ITEM003  | 0.0           |
+      | flag_active | financial_qty | include_exclude |
+      | Y           | 100.0         | include         |
+      | N           | 100.0         | exclude         |
+      | NULL        | 100.0         | exclude         |
+      | Y           | NULL          | exclude         |
+
+  # Validation: financial_qty value
+  Scenario Outline: Validate financial_qty value for inventory at risk calculation
+    Given a record in "f_inv_movmnt" with flag_active = 'Y'
+    And financial_qty = <financial_qty>
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the record should <include_exclude> in the calculation
+
+    Examples:
+      | financial_qty | include_exclude |
+      | 50.0          | include         |
+      | 0.0           | include         |
+      | NULL          | exclude         |
 
   # Error Scenario: No active records
+  Scenario: Handle case when no active records exist
+    Given there are no records in "f_inv_movmnt" with flag_active = 'Y'
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the result should be 0 or an empty result set
 
-  Scenario: No active records in f_inv_movmnt
-    Given the f_inv_movmnt table contains no records with flag_active = 'Y'
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then the result should be 0
-    And the output should indicate "No active inventory at risk found"
-
-  # Error Scenario: financial_qty is NULL
-
-  Scenario Outline: financial_qty is NULL for active records
-    Given the f_inv_movmnt table contains records with flag_active = 'Y' and financial_qty = <financial_qty>
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then NULL values in financial_qty should be treated as 0 in the sum
-    And the result should be the sum of non-NULL financial_qty values
-
-    Examples:
-      | financial_qty |
-      | NULL          |
-      | 50.0          |
-      | 0.0           |
-
-  # Validation Rule: flag_active must be 'Y' (case-sensitive)
-
-  Scenario Outline: Validate flag_active value
-    Given the f_inv_movmnt table contains records with flag_active = '<flag_active>'
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then only records with flag_active exactly equal to 'Y' (case-sensitive) are included
-    And records with flag_active = '<flag_active>' are excluded if not exactly 'Y'
+  # Error Scenario: Invalid flag_active values
+  Scenario Outline: Handle invalid flag_active values
+    Given a record in "f_inv_movmnt" with flag_active = <flag_active>
+    And financial_qty = 100.0
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the record should be excluded from the calculation
+    And an error message "Invalid flag_active value detected: <flag_active>" should be logged if flag_active is not 'Y' or 'N'
 
     Examples:
       | flag_active |
-      | Y           |
+      | Z           |
+      | 1           |
       | y           |
-      | N           |
-      | NULL        |
+      | n           |
+      | ''          |
 
-  # Error Scenario: Invalid financial_qty values
-
-  Scenario Outline: Invalid financial_qty values
-    Given the f_inv_movmnt table contains records with flag_active = 'Y' and financial_qty = <financial_qty>
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then if financial_qty is negative, the record is included in the sum
-    And if financial_qty is NULL, it is treated as 0
-    And the result should be the sum of all valid financial_qty values
+  # Error Scenario: financial_qty negative or non-numeric
+  Scenario Outline: Handle invalid financial_qty values
+    Given a record in "f_inv_movmnt" with flag_active = 'Y'
+    And financial_qty = <financial_qty>
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the record should be excluded from the calculation
+    And an error message "Invalid financial_qty value detected: <financial_qty>" should be logged
 
     Examples:
       | financial_qty |
-      | -10.0         |
-      | 0.0           |
-      | 100.0         |
-      | NULL          |
+      | -100.0        |
+      | 'abc'         |
+
+  # Data-driven: Multiple test cases for summary calculation
+  Scenario Outline: Calculate inventory at risk for multiple records
+    Given the following records exist in "f_inv_movmnt":
+      | txn_id | flag_active | financial_qty | item_nbr | inv_loc |
+      | <txn_id_1> | <flag_active_1> | <financial_qty_1> | <item_nbr_1> | <inv_loc_1> |
+      | <txn_id_2> | <flag_active_2> | <financial_qty_2> | <item_nbr_2> | <inv_loc_2> |
+      | <txn_id_3> | <flag_active_3> | <financial_qty_3> | <item_nbr_3> | <inv_loc_3> |
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the result should be <expected_total>
+
+    Examples:
+      | txn_id_1 | flag_active_1 | financial_qty_1 | item_nbr_1 | inv_loc_1 | txn_id_2 | flag_active_2 | financial_qty_2 | item_nbr_2 | inv_loc_2 | txn_id_3 | flag_active_3 | financial_qty_3 | item_nbr_3 | inv_loc_3 | expected_total |
+      | T1       | Y             | 100.0           | I1         | L1        | T2       | Y             | 50.0            | I2         | L2        | T3       | N             | 30.0            | I3         | L3        | 150.0          |
+      | T4       | Y             | NULL            | I4         | L4        | T5       | Y             | 20.0            | I5         | L5        | T6       | Y             | 10.0            | I6         | L6        | 30.0           |
+      | T7       | N             | 40.0            | I7         | L7        | T8       | N             | 60.0            | I8         | L8        | T9       | N             | 80.0            | I9         | L9        | 0.0            |
 
   # Output Format Validation
-
   Scenario: Validate output format of inventory at risk summary
-    Given the SQL query is executed to calculate inventory at risk
-    When the result is returned
-    Then the output should contain the following columns:
-      | item_nbr      | string  |
-      | total_financial_qty | double |
-    And the total_financial_qty should be the sum of financial_qty for each item_nbr where flag_active = 'Y'
-    And the output should be ordered by item_nbr ascending
+    Given the SQL is executed to calculate inventory at risk
+    When the result set is returned
+    Then the output should include:
+      | total_financial_qty | (if grouped) item_nbr | (if grouped) inv_loc |
+    And total_financial_qty should be a double value with two decimal places
+    And item_nbr and inv_loc should be string values if grouping is applied
 
-  # Error Scenario: Missing required columns
+  # SQL Validation Rules
+  Scenario: Validate SQL query for inventory at risk calculation
+    Given the SQL is written to calculate inventory at risk
+    When the query is reviewed
+    Then the WHERE clause should include "flag_active = 'Y'"
+    And the SUM should be performed on "financial_qty"
+    And records with financial_qty IS NULL should be excluded from the SUM
+    And the query should use the table "purgo_playground.f_inv_movmnt"
+    And the output should match the required format
 
-  Scenario: Missing financial_qty column in f_inv_movmnt
-    Given the f_inv_movmnt table does not contain the financial_qty column
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then an error message "Column financial_qty not found in f_inv_movmnt" should be returned
+  # Edge Case: Large financial_qty values
+  Scenario Outline: Handle large financial_qty values
+    Given a record in "f_inv_movmnt" with flag_active = 'Y'
+    And financial_qty = <large_value>
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the result should include <large_value> in the total
 
-  # Error Scenario: Invalid data type for financial_qty
+    Examples:
+      | large_value      |
+      | 9999999999.99    |
+      | 1234567890123.45 |
 
-  Scenario: financial_qty column contains non-numeric values
-    Given the f_inv_movmnt table contains records where financial_qty is not a numeric value
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then an error message "Invalid data type for financial_qty: expected numeric" should be returned
+  # Edge Case: Duplicate txn_id
+  Scenario: Handle duplicate txn_id records
+    Given there are multiple records in "f_inv_movmnt" with the same txn_id and flag_active = 'Y'
+    And each record has a different financial_qty
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then all financial_qty values for duplicate txn_id records should be included in the total
 
-  # Validation Rule: financial_qty must be numeric and non-nullable for calculation
+  # Edge Case: Mixed case flag_active values
+  Scenario Outline: Handle mixed case flag_active values
+    Given a record in "f_inv_movmnt" with flag_active = <flag_active>
+    And financial_qty = 100.0
+    When the SQL is executed to sum financial_qty where flag_active = 'Y'
+    Then the record should be excluded from the calculation
 
-  Scenario: Validate financial_qty data type and nullability
-    Given the f_inv_movmnt table contains records with financial_qty values
-    When the SQL query is executed to sum financial_qty for all records where flag_active = 'Y'
-    Then only numeric values are included in the sum
-    And NULL values are treated as 0
-    And non-numeric values cause an error
+    Examples:
+      | flag_active |
+      | y           |
+      | Y           |
+      | n           |
+      | N           |
 
