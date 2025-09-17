@@ -1,0 +1,43 @@
+Feature: Automate migration of files from S3 landing folder to archive folder
+
+  Background:
+    Given the Databricks secret scope "aws_keys" contains "access_key" and "secret_key"
+    And the Unity Catalog is set to "purgo_databricks"
+    And the Unity Catalog Schema is set to "purgo_playground"
+
+  Scenario: Migrate files with SUCCESS status
+    Given the s3_file_process_log table contains files with file_status "SUCCESS"
+    When the script reads the s3_landing_path and s3_archive_path for each file
+    Then the file should be moved from the landing folder to the archive folder
+    And the operation should be logged in the s3_file_transfer_audit table
+
+  Scenario: Handle files with non-SUCCESS status
+    Given the s3_file_process_log table contains files with file_status not equal to "SUCCESS"
+    When the script processes the files
+    Then the files should not be moved
+    And an error message "File status not eligible for archiving" should be logged
+
+  Scenario Outline: Validate file paths and credentials
+    Given the s3_file_process_log table contains a file with <file_status>
+    And the s3_landing_path is "<s3_landing_path>"
+    And the s3_archive_path is "<s3_archive_path>"
+    When the script attempts to move the file
+    Then the operation should <result>
+    And the log should contain "<log_message>"
+
+    Examples:
+      | file_status | s3_landing_path                                      | s3_archive_path                                      | result          | log_message                              |
+      | SUCCESS     | s3://agilisium-playground-dev/filestore/purgo/source | s3://agilisium-playground-dev/filestore/purgo/target | succeed         | "File moved successfully"                |
+      | FAILED      | s3://agilisium-playground-dev/filestore/purgo/source | s3://agilisium-playground-dev/filestore/purgo/target | not succeed     | "File status not eligible for archiving" |
+      | SUCCESS     | invalid_path                                         | s3://agilisium-playground-dev/filestore/purgo/target | not succeed     | "Invalid landing path"                   |
+      | SUCCESS     | s3://agilisium-playground-dev/filestore/purgo/source | invalid_path                                         | not succeed     | "Invalid archive path"                   |
+
+  Scenario: Error handling for missing credentials
+    Given the Databricks secret scope "aws_keys" does not contain "access_key" or "secret_key"
+    When the script attempts to access S3
+    Then an error message "Missing AWS credentials" should be logged
+
+  Scenario: Log file transfer audit
+    Given a file is successfully moved from landing to archive
+    When the operation is completed
+    Then the s3_file_transfer_audit table should be updated with the run_start_time and run_end_time
