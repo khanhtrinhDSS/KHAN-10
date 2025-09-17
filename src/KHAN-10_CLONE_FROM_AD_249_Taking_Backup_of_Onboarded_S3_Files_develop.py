@@ -1,101 +1,78 @@
-%pip install boto3
-%pip install botocore
-
 spark.catalog.setCurrentCatalog("purgo_databricks")
 
-# PySpark script
-# Purpose: Automate the migration of files from the Purgo S3 landing folder to the archive folder
-# Author: Khanh Trinh
-# Date: 2025-09-17
-# Description: This script identifies files with a 'SUCCESS' status in the s3_file_process_log table and moves them from the landing folder to the archive folder in S3. It uses Databricks secrets for AWS credentials and logs the operations in the s3_file_transfer_audit table.
-
+# Import necessary PySpark modules
 from pyspark.sql import SparkSession  
 from pyspark.sql.functions import col, current_timestamp  
-import boto3  
-from botocore.exceptions import NoCredentialsError, PartialCredentialsError  
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType  
 
 # Initialize Spark session
-spark = SparkSession.builder.appName("S3 File Migration").getOrCreate()
+spark = SparkSession.builder \
+    .appName("S3 File Migration") \
+    .getOrCreate()
 
-def get_aws_credentials():
-    """
-    Retrieve AWS credentials from Databricks secrets.
+# Load AWS credentials from Databricks secrets
+access_key = dbutils.secrets.get(scope="aws_keys", key="access_key")
+secret_key = dbutils.secrets.get(scope="aws_keys", key="secret_key")
 
-    Returns:
-        tuple: A tuple containing the access key and secret key.
-    """
+# Set AWS credentials for S3 access
+spark._jsc.hadoopConfiguration().set("fs.s3a.access.key", access_key)
+spark._jsc.hadoopConfiguration().set("fs.s3a.secret.key", secret_key)
+
+# Define the schema for the s3_file_process_log table
+schema = StructType([
+    StructField("file_name", StringType(), True),
+    StructField("s3_vendor_path", StringType(), True),
+    StructField("s3_landing_path", StringType(), True),
+    StructField("s3_archive_path", StringType(), True),
+    StructField("file_status", StringType(), True),
+    StructField("file_processed_date", TimestampType(), True)
+])
+
+# Read the s3_file_process_log table
+try:
+    s3_file_process_log_df = spark.read \
+        .format("delta") \
+        .schema(schema) \
+        .table("purgo_playground.s3_file_process_log")
+except Exception as e:
+    print(f"Error reading s3_file_process_log table: {e}")
+
+# Filter files with SUCCESS status
+success_files_df = s3_file_process_log_df.filter(col("file_status") == "SUCCESS")
+
+# Function to move files from landing to archive
+def move_file(row):
     try:
-        access_key = dbutils.secrets.get(scope="aws_keys", key="access_key")
-        secret_key = dbutils.secrets.get(scope="aws_keys", key="secret_key")
-        return access_key, secret_key
-    except Exception as e:
-        print(f"Error retrieving AWS credentials: {e}")
-        raise
-
-def move_file_to_archive(s3_client, source_path, target_path):
-    """
-    Move a file from the source path to the target path in S3.
-
-    Args:
-        s3_client (boto3.client): The S3 client.
-        source_path (str): The source S3 path.
-        target_path (str): The target S3 path.
-
-    Returns:
-        bool: True if the file was moved successfully, False otherwise.
-    """
-    try:
-        bucket_name, source_key = source_path.replace("s3://", "").split("/", 1)
-        _, target_key = target_path.replace("s3://", "").split("/", 1)
-        s3_client.copy_object(Bucket=bucket_name, CopySource={'Bucket': bucket_name, 'Key': source_key}, Key=target_key)
-        s3_client.delete_object(Bucket=bucket_name, Key=source_key)
-        return True
-    except Exception as e:
-        print(f"Error moving file from {source_path} to {target_path}: {e}")
-        return False
-
-def log_file_transfer_audit(run_start_time, run_end_time):
-    """
-    Log the file transfer operation in the s3_file_transfer_audit table.
-
-    Args:
-        run_start_time (timestamp): The start time of the operation.
-        run_end_time (timestamp): The end time of the operation.
-    """
-    audit_data = [(run_start_time, run_end_time)]
-    audit_df = spark.createDataFrame(audit_data, ["run_start_time", "run_end_time"])
-    audit_df.write.insertInto("purgo_playground.s3_file_transfer_audit", overwrite=False)
-
-def main():
-    """
-    Main function to execute the file migration process.
-    """
-    run_start_time = current_timestamp()
-
-    # Retrieve AWS credentials
-    access_key, secret_key = get_aws_credentials()
-
-    # Initialize S3 client
-    s3_client = boto3.client('s3', aws_access_key_id=access_key, aws_secret_access_key=secret_key)
-
-    # Read eligible files from the log table
-    eligible_files_df = spark.sql("""
-        SELECT file_name, s3_landing_path, s3_archive_path
-        FROM purgo_playground.s3_file_process_log
-        WHERE file_status = 'SUCCESS'
-    """)
-
-    # Process each eligible file
-    for row in eligible_files_df.collect():
         source_path = row.s3_landing_path
         target_path = row.s3_archive_path
-        if move_file_to_archive(s3_client, source_path, target_path):
-            print(f"File {row.file_name} moved successfully from {source_path} to {target_path}")
-        else:
-            print(f"Failed to move file {row.file_name} from {source_path} to {target_path}")
+        file_name = row.file_name
 
-    run_end_time = current_timestamp()
-    log_file_transfer_audit(run_start_time, run_end_time)
+        # Construct full source and target paths
+        full_source_path = f"{source_path}/{file_name}"
+        full_target_path = f"{target_path}/{file_name}"
 
-if __name__ == "__main__":
-    main()
+        # Move file from source to target
+        dbutils.fs.mv(full_source_path, full_target_path)
+        print(f"File {file_name} moved successfully from {source_path} to {target_path}")
+
+    except Exception as e:
+        print(f"Error moving file {row.file_name}: {e}")
+
+# Apply the move_file function to each row in the DataFrame
+success_files_df.rdd.foreach(move_file)
+
+# Log the file transfer audit
+try:
+    audit_df = spark.createDataFrame([
+        (current_timestamp(), current_timestamp())
+    ], ["run_start_time", "run_end_time"])
+
+    audit_df.write \
+        .format("delta") \
+        .mode("append") \
+        .saveAsTable("purgo_playground.s3_file_transfer_audit")
+except Exception as e:
+    print(f"Error logging file transfer audit: {e}")
+
+# Stop the Spark session
+spark.stop()
