@@ -1,151 +1,181 @@
-# Databricks PySpark script to automate migration of files from Purgo S3 landing folder to archive folder
-# References s3_file_process_log table to identify eligible files for archiving (file_status = 'SUCCESS')
-# Dynamically reads s3_landing_path and s3_archive_path for each file from the log table
-# Uses Databricks secrets for AWS credentials (scope: aws_keys, keys: access_key, secret_key)
-# Logs file transfer audit in purgo_playground.s3_file_transfer_audit
-# Handles error cases and logs appropriate messages
-# Ensures schema consistency and proper NULL handling
-# All code uses DataFrame APIs and Databricks best practices
+spark.catalog.setCurrentCatalog("purgo_databricks")
 
-# Set current catalog to Unity Catalog
-spark.catalog.setCurrentCatalog("purgo_databricks")  # built-in
+# PySpark script for Databricks: Automates migration of S3 files from landing to archive folder based on process log
+# Purpose: Move files with file_status='SUCCESS' from S3 landing to archive folder using metadata from s3_file_process_log
+# Author: Khanh Trinh
+# Date: 2025-09-17
+# Description: This script reads eligible file records from purgo_playground.s3_file_process_log, validates S3 paths and credentials, moves files from landing to archive using dbutils.fs.mv, and logs the operation in purgo_playground.s3_file_transfer_audit. It includes error handling, schema validation, and data quality checks.
 
-# Import required PySpark modules
-from pyspark.sql.functions import col, current_timestamp  
-from pyspark.sql.types import StringType, TimestampType, StructType, StructField  
+# Import required modules for DataFrame operations and types
+from pyspark.sql import functions as F  
+from pyspark.sql.types import StringType, TimestampType  
+from pyspark.sql import DataFrame  
+import datetime  
 
 # Load AWS credentials from Databricks secrets
 try:
-    access_key = dbutils.secrets.get(scope="aws_keys", key="access_key")  # databricks
-    secret_key = dbutils.secrets.get(scope="aws_keys", key="secret_key")  # databricks
-except Exception as cred_ex:
-    # Log missing credentials error
-    print("Missing AWS credentials in Databricks secret scope 'aws_keys'.")
-    raise cred_ex
+    access_key = dbutils.secrets.get(scope="aws_keys", key="access_key")  # Databricks secret
+    secret_key = dbutils.secrets.get(scope="aws_keys", key="secret_key")  # Databricks secret
+except Exception as e:
+    # Log missing credentials error and exit
+    raise RuntimeError("Missing AWS credentials in Databricks secret scope 'aws_keys'") from e
 
-# Set AWS credentials for S3 access using Hadoop configuration
-spark.conf.set("fs.s3a.access.key", access_key)  # databricks
-spark.conf.set("fs.s3a.secret.key", secret_key)  # databricks
+# Set AWS credentials for S3 access using Spark configuration
+spark.conf.set("fs.s3a.access.key", access_key)
+spark.conf.set("fs.s3a.secret.key", secret_key)
 
-# Define schema for s3_file_process_log table for validation
-s3_file_process_log_schema = StructType([
-    StructField("file_name", StringType(), True),
-    StructField("s3_vendor_path", StringType(), True),
-    StructField("s3_landing_path", StringType(), True),
-    StructField("s3_archive_path", StringType(), True),
-    StructField("file_status", StringType(), True),
-    StructField("file_processed_date", TimestampType(), True)
-])  # pyspark
+# Set current catalog and schema for Unity Catalog
+spark.sql("USE CATALOG purgo_databricks")
+spark.sql("USE purgo_playground")
 
-# Read s3_file_process_log table and validate schema
-try:
-    s3_file_process_log_df = spark.read.table("purgo_playground.s3_file_process_log")  # databricks
-    # Enforce column order and types to match schema
-    s3_file_process_log_df = s3_file_process_log_df.select(
-        col("file_name").cast(StringType()),
-        col("s3_vendor_path").cast(StringType()),
-        col("s3_landing_path").cast(StringType()),
-        col("s3_archive_path").cast(StringType()),
-        col("file_status").cast(StringType()),
-        col("file_processed_date").cast(TimestampType())
-    )
-except Exception as read_ex:
-    print(f"Error reading s3_file_process_log table: {read_ex}")
-    raise read_ex
-
-# CTE: Select eligible files for archiving (file_status = 'SUCCESS')
-# Only files with valid non-null paths and file_name are considered
-eligible_files_cte = (
-    s3_file_process_log_df
-    .filter(
-        (col("file_status") == "SUCCESS") &
-        (col("file_name").isNotNull()) &
-        (col("s3_landing_path").isNotNull()) &
-        (col("s3_archive_path").isNotNull())
-    )
-    .select(
-        col("file_name"),
-        col("s3_landing_path"),
-        col("s3_archive_path")
-    )
-)
-
-# Collect eligible files to driver for file operations
-eligible_files = eligible_files_cte.collect()  # databricks
-
-# Initialize audit log variables
-run_start_time = None
-run_end_time = None
-
-# Start audit log timer
-from datetime import datetime  
-run_start_time = datetime.utcnow()
-
-# Track file move results for logging
-file_move_results = []
-
-# Move each eligible file from landing to archive folder
-for file_row in eligible_files:
-    file_name = file_row["file_name"]
-    s3_landing_path = file_row["s3_landing_path"]
-    s3_archive_path = file_row["s3_archive_path"]
-
-    # Validate S3 paths format
-    if not (s3_landing_path.startswith("s3://") and s3_archive_path.startswith("s3://")):
-        file_move_results.append({
-            "file_name": file_name,
-            "result": "FAILED",
-            "message": "Invalid S3 path format"
-        })
-        continue
-
-    # Construct full source and target file paths
-    source_file_path = f"{s3_landing_path.rstrip('/')}/{file_name}"
-    target_file_path = f"{s3_archive_path.rstrip('/')}/{file_name}"
-
+def get_success_files_df() -> DataFrame:
+    """
+    Returns a DataFrame of files eligible for archiving (file_status='SUCCESS') from s3_file_process_log.
+    Ensures schema consistency and correct data types.
+    Returns:
+        DataFrame: Filtered DataFrame with columns [file_name, s3_vendor_path, s3_landing_path, s3_archive_path, file_status, file_processed_date]
+    """
+    # Read the s3_file_process_log table
     try:
-        # Move file from landing to archive using dbutils.fs.mv
-        dbutils.fs.mv(source_file_path, target_file_path)  # databricks
-        file_move_results.append({
-            "file_name": file_name,
-            "result": "SUCCESS",
-            "message": f"File moved successfully from {source_file_path} to {target_file_path}"
-        })
-    except Exception as mv_ex:
-        file_move_results.append({
-            "file_name": file_name,
-            "result": "FAILED",
-            "message": f"Error moving file: {str(mv_ex)}"
-        })
+        df = spark.table("purgo_playground.s3_file_process_log")
+    except Exception as e:
+        raise RuntimeError("Error reading s3_file_process_log table") from e
 
-# End audit log timer
-run_end_time = datetime.utcnow()
-
-# Log file transfer audit in s3_file_transfer_audit table
-try:
-    # Prepare audit DataFrame with schema validation
-    audit_schema = StructType([
-        StructField("run_start_time", TimestampType(), True),
-        StructField("run_end_time", TimestampType(), True)
-    ])  # pyspark
-
-    audit_data = [(run_start_time, run_end_time)]
-    audit_df = spark.createDataFrame(audit_data, schema=audit_schema)  # databricks
-
-    # Ensure column order and types match target table
-    audit_df = audit_df.select(
-        col("run_start_time").cast(TimestampType()),
-        col("run_end_time").cast(TimestampType())
+    # Select and cast columns to enforce schema consistency
+    df = df.select(
+        F.col("file_name").cast(StringType()),
+        F.col("s3_vendor_path").cast(StringType()),
+        F.col("s3_landing_path").cast(StringType()),
+        F.col("s3_archive_path").cast(StringType()),
+        F.col("file_status").cast(StringType()),
+        F.col("file_processed_date").cast(TimestampType())
     )
 
-    # Insert audit log into s3_file_transfer_audit table
-    audit_df.write.format("delta").mode("append").saveAsTable("purgo_playground.s3_file_transfer_audit")  # databricks
-except Exception as audit_ex:
-    print(f"Error logging file transfer audit: {audit_ex}")
+    # Filter for files with file_status='SUCCESS'
+    df_success = df.filter(F.col("file_status") == "SUCCESS")
 
-# Log file move results for monitoring and troubleshooting
-for result in file_move_results:
-    print(f"File: {result['file_name']}, Result: {result['result']}, Message: {result['message']}")
+    # Data quality check: drop rows with null or empty file_name, s3_landing_path, s3_archive_path
+    df_success = df_success.filter(
+        (F.col("file_name").isNotNull()) & (F.length(F.col("file_name")) > 0) &
+        (F.col("s3_landing_path").isNotNull()) & (F.length(F.col("s3_landing_path")) > 0) &
+        (F.col("s3_archive_path").isNotNull()) & (F.length(F.col("s3_archive_path")) > 0)
+    )
+
+    return df_success
+
+def validate_s3_path(s3_path: str) -> bool:
+    """
+    Validates that the S3 path is well-formed and starts with 's3://'.
+    Args:
+        s3_path (str): S3 path to validate
+    Returns:
+        bool: True if valid, False otherwise
+    """
+    return isinstance(s3_path, str) and s3_path.startswith("s3://") and len(s3_path) > 5
+
+def move_file_s3(source_path: str, target_path: str) -> str:
+    """
+    Moves a file from source_path to target_path using dbutils.fs.mv.
+    Args:
+        source_path (str): Full S3 source file path
+        target_path (str): Full S3 target file path
+    Returns:
+        str: Status message ("SUCCESS" or error message)
+    """
+    try:
+        dbutils.fs.mv(source_path, target_path)
+        return "SUCCESS"
+    except Exception as e:
+        return f"ERROR: {str(e)}"
+
+def archive_files(df: DataFrame) -> list:
+    """
+    Iterates over eligible files and moves each from landing to archive folder.
+    Logs status for each file.
+    Args:
+        df (DataFrame): DataFrame of eligible files
+    Returns:
+        list: List of dicts with file_name, source_path, target_path, status
+    """
+    results = []
+    # Collect rows to driver for file operations (small batch assumed)
+    rows = df.select("file_name", "s3_landing_path", "s3_archive_path").collect()
+    for row in rows:
+        file_name = row["file_name"]
+        s3_landing_path = row["s3_landing_path"]
+        s3_archive_path = row["s3_archive_path"]
+
+        # Validate S3 paths
+        if not validate_s3_path(s3_landing_path):
+            status = "ERROR: Invalid landing path"
+        elif not validate_s3_path(s3_archive_path):
+            status = "ERROR: Invalid archive path"
+        else:
+            source_file = f"{s3_landing_path.rstrip('/')}/{file_name}"
+            target_file = f"{s3_archive_path.rstrip('/')}/{file_name}"
+            status = move_file_s3(source_file, target_file)
+        results.append({
+            "file_name": file_name,
+            "source_path": s3_landing_path,
+            "target_path": s3_archive_path,
+            "status": status
+        })
+    return results
+
+def log_file_transfer_audit(run_start_time: datetime.datetime, run_end_time: datetime.datetime) -> None:
+    """
+    Logs the file transfer audit to s3_file_transfer_audit table.
+    Args:
+        run_start_time (datetime.datetime): Start time of the run
+        run_end_time (datetime.datetime): End time of the run
+    Returns:
+        None
+    """
+    # Create DataFrame for audit log
+    audit_df = spark.createDataFrame(
+        [(run_start_time, run_end_time)],
+        ["run_start_time", "run_end_time"]
+    )
+    # Ensure schema consistency
+    audit_df = audit_df.select(
+        F.col("run_start_time").cast(TimestampType()),
+        F.col("run_end_time").cast(TimestampType())
+    )
+    # Insert into audit table
+    audit_df.write.format("delta").mode("append").saveAsTable("purgo_playground.s3_file_transfer_audit")
+
+def log_operation_results(results: list) -> None:
+    """
+    Logs operation results for each file to driver log.
+    Args:
+        results (list): List of dicts with file_name, source_path, target_path, status
+    Returns:
+        None
+    """
+    for res in results:
+        if res["status"] == "SUCCESS":
+            print(f"File '{res['file_name']}' moved successfully from '{res['source_path']}' to '{res['target_path']}'")
+        else:
+            print(f"File '{res['file_name']}' not moved: {res['status']}")
+
+# Main script execution
+if __name__ == "__main__":
+    # Record start time
+    run_start_time = datetime.datetime.utcnow()
+
+    # Get eligible files for archiving
+    success_files_df = get_success_files_df()
+
+    # Archive files and collect results
+    operation_results = archive_files(success_files_df)
+
+    # Log operation results
+    log_operation_results(operation_results)
+
+    # Record end time
+    run_end_time = datetime.datetime.utcnow()
+
+    # Log file transfer audit
+    log_file_transfer_audit(run_start_time, run_end_time)
 
 # End of script
-# All file operations and audit logging completed
