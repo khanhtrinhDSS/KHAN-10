@@ -1,0 +1,193 @@
+Feature: SQL-based ETL logic for trf_inv_txn table using provided field mappings, source tables, and lookups
+
+  Background:
+    Given the source tables are available in purgo_databricks.purgo_playground schema
+    And the driving table is mseg
+    And all joins and filters are applied as per Source_Tables sheet
+    And all field mappings and transformation logic are applied as per DATA_MAP sheet
+    And movement flag columns are mapped using movment_mapping and lkp_mapping sheets
+    And deduplication is handled using prod_plant_lot_location_key and transaction_id as composite primary key
+    And all logic, including aggregations, is implemented using CTEs only
+
+  Scenario Outline: Successful population of trf_inv_txn record from source tables
+    Given a mseg record with matnr = <item_nbr>, werks = <plant_cd>, lgort = <location_cd>, charg = <lot_nbr>
+    And mkpf.budat is within the last 5 years in yyyymmdd format
+    And mbew.bwtar is blank (trimmed)
+    And t156t.spras = 'E'
+    When the ETL logic is executed
+    Then trf_inv_txn is populated with:
+      | Field                           | Value                                                                                   |
+      | company_cd                      | Fetched from T001K.BUKRS via BWKEY from T001W by passing plant_cd                       |
+      | item_nbr                        | mseg.matnr                                                                              |
+      | location_cd                     | mseg.lgort                                                                              |
+      | lot_nbr                         | mseg.charg                                                                              |
+      | plant_cd                        | mseg.werks                                                                              |
+      | src_sys_cd                      | 'mbd'                                                                                   |
+      | transaction_id                  | concat(mseg.mblnr, mseg.zeile, mseg.mjahr)                                              |
+      | company_currency_cd             | t001.waers                                                                              |
+      | document_nbr                    | mseg.mblnr                                                                              |
+      | gl_account_nbr                  | mseg.sakto                                                                              |
+      | posting_dt_yyyymmdd             | mkpf.budat                                                                              |
+      | primary_uom_cd                  | mseg.meins                                                                              |
+      | reference_order_company_cd      | mseg.bukrs                                                                              |
+      | reference_order_schedule_line_nbr| 1                                                                                       |
+      | reference_order_type            | Populated based on reference_order_class (see mapping logic)                            |
+      | transaction_dt_yyyymmdd         | mkpf.bldat                                                                              |
+      | transaction_qty_primary_uom     | IF mseg.shkzg='H' THEN mseg.menge*-1 ELSE mseg.menge                                    |
+      | transaction_qty_transaction_uom | IF mseg.shkzg='H' THEN mseg.erfmg*-1 ELSE mseg.erfmg                                    |
+      | transaction_reason              | t156t.btext                                                                             |
+      | transaction_ts                  | concat(mkpf.cpudt, mkpf.cputm) as 'yyyy-MM-dd HH:mm:ss'                                 |
+      | transaction_type_cd             | mkpf.vgart                                                                              |
+      | transaction_uom                 | mseg.erfme                                                                              |
+      | unit_cost_company_currency      | CASE WHEN mbew.vprsv='S' THEN mbew.stprs/mbew.peinh WHEN mbew.vprsv='V' THEN mbew.verpr/mbew.peinh END |
+      | plant_key                       | concat_ws('|', src_sys_cd, plant_cd)                                                    |
+      | prod_key                        | concat_ws('|', src_sys_cd, item_nbr)                                                    |
+      | prod_plant_key                  | concat_ws('|', src_sys_cd, item_nbr, plant_cd)                                          |
+      | plant_location_key              | concat_ws('|', src_sys_cd, plant_cd, location_cd)                                       |
+      | plant_lot_key                   | concat_ws('|', src_sys_cd, plant_cd, lot_nbr)                                           |
+      | prod_plant_location_key         | concat_ws('|', src_sys_cd, item_nbr, plant_cd, location_cd)                             |
+      | prod_plant_lot_key              | concat_ws('|', src_sys_cd, item_nbr, plant_cd, lot_nbr)                                 |
+      | prod_plant_lot_location_key     | concat_ws('|', src_sys_cd, item_nbr, plant_cd, lot_nbr, location_cd)                    |
+      | gl_acct_key                     | concat_ws('|', src_sys_cd, gl_account_nbr)                                              |
+      | co_key                          | concat_ws('|', src_sys_cd, company_cd)                                                  |
+      | consumption_usage_flag          | Lookup from movment_mapping by mseg.bwart                                               |
+      | receipt_flag                    | Lookup from movment_mapping by mseg.bwart                                               |
+      | scrap_flag                      | Lookup from movment_mapping by mseg.bwart                                               |
+      | shipment_flag                   | Lookup from movment_mapping by mseg.bwart                                               |
+    And all required fields are present and conform to type and value rules
+    And no duplicate record exists for the same prod_plant_lot_location_key and transaction_id
+
+    Examples:
+      | item_nbr   | plant_cd | location_cd | lot_nbr | reference_order_class | mseg.shkzg | mseg.menge | mseg.erfmg | mseg.bwart | expected_consumption_usage_flag | expected_receipt_flag | expected_scrap_flag | expected_shipment_flag |
+      | PROD001    | AU01     | LOC01       | LOT01   | PO                   | H          | 100        | 50         | 641        | no                           | no                 | no               | no                 |
+      | PROD002    | BAS1     | LOC02       | LOT02   | SO                   | S          | 200        | 100        | 642        | no                           | no                 | no               | no                 |
+      | PROD003    | RM01     | LOC03       | LOT03   | WO                   | H          | 150        | 75         | 643        | no                           | no                 | no               | no                 |
+
+  Scenario Outline: Validation error for missing required fields
+    Given a mseg record with missing <missing_field>
+    When the ETL logic is executed
+    Then an error is raised: "Missing required field: <missing_field>"
+    And the record is not loaded into trf_inv_txn
+
+    Examples:
+      | missing_field   |
+      | matnr           |
+      | werks           |
+      | mblnr           |
+      | zeile           |
+      | mjahr           |
+
+  Scenario Outline: Validation error for type mismatch
+    Given a mseg record with <field> value of incorrect type <invalid_value>
+    When the ETL logic is executed
+    Then an error is raised: "Type mismatch for field <field>: expected <expected_type>, got <invalid_value>"
+    And the record is not loaded into trf_inv_txn
+
+    Examples:
+      | field      | invalid_value | expected_type |
+      | menge      | 'abc'         | Decimal       |
+      | erfmg      | 'xyz'         | Decimal       |
+      | budat      | '2023-01-01'  | yyyymmdd      |
+      | meins      | 123           | String        |
+
+  Scenario Outline: Handling of default values for optional fields
+    Given a mseg record where <optional_field> is not represented
+    When the ETL logic is executed
+    Then trf_inv_txn.<optional_field> is set to <default_value>
+
+    Examples:
+      | optional_field         | default_value |
+      | location_cd            | none          |
+      | lot_nbr                | none          |
+      | plant_cd               | none          |
+      | company_cd             | none          |
+      | reference_order_type   | none          |
+
+  Scenario Outline: Deduplication logic for composite primary key
+    Given two mseg records with the same prod_plant_lot_location_key and transaction_id
+    When the ETL logic is executed
+    Then only one record is loaded into trf_inv_txn
+    And a warning is logged: "Duplicate record detected for composite key: <prod_plant_lot_location_key>, <transaction_id>"
+
+    Examples:
+      | prod_plant_lot_location_key           | transaction_id      |
+      | mbd|PROD001|AU01|LOT01|LOC01          | 1000001-1-2023     |
+      | mbd|PROD002|BAS1|LOT02|LOC02          | 1000002-1-2023     |
+
+  Scenario Outline: Movement flag mapping from movment_mapping and lkp_mapping
+    Given a mseg record with bwart = <movement_type>
+    When the ETL logic is executed
+    Then trf_inv_txn.consumption_usage_flag is set to <consumption_usage_flag>
+    And trf_inv_txn.receipt_flag is set to <receipt_flag>
+    And trf_inv_txn.scrap_flag is set to <scrap_flag>
+    And trf_inv_txn.shipment_flag is set to <shipment_flag>
+
+    Examples:
+      | movement_type | consumption_usage_flag | receipt_flag | scrap_flag | shipment_flag |
+      | 641           | no                    | no           | no         | no            |
+      | 642           | no                    | no           | no         | no            |
+      | 643           | no                    | no           | no         | no            |
+
+  Scenario Outline: Reference order type mapping logic
+    Given a mseg record with reference_order_class = <reference_order_class>
+    When the ETL logic is executed
+    Then trf_inv_txn.reference_order_type is set to <expected_reference_order_type>
+
+    Examples:
+      | reference_order_class | expected_reference_order_type |
+      | PO                   | EKKO.BSART                    |
+      | SO                   | VBAK.AUART                    |
+      | WO                   | AUFK.AUART                    |
+      | WC                   | AUFK.AUART                    |
+      | OTHER                | none                          |
+
+  Scenario: Aggregation logic handled in CTEs
+    Given multiple mseg records for the same prod_plant_lot_location_key and transaction_id
+    When aggregation is required for transaction_qty_primary_uom
+    Then the sum of transaction_qty_primary_uom is calculated in a CTE
+    And the aggregated value is loaded into trf_inv_txn
+
+  Scenario: Filter logic for MKPF.budat
+    Given a mseg record joined to mkpf with budat = <budat>
+    When <budat> is within the last 5 years from current date
+    Then the record is processed
+    When <budat> is older than 5 years
+    Then the record is excluded
+
+    Examples:
+      | budat      | expected_result |
+      | 20210101   | processed       |
+      | 20180101   | processed       |
+      | 20150101   | excluded        |
+
+  Scenario: Filter logic for MBEW.BWTAR
+    Given a mseg record joined to mbew with bwtar = <bwtar>
+    When <bwtar> is blank (after trim)
+    Then the record is processed
+    When <bwtar> is not blank
+    Then the record is excluded
+
+    Examples:
+      | bwtar   | expected_result |
+      | ''      | processed       |
+      | ' '     | processed       |
+      | 'A1'    | excluded        |
+
+  Scenario: Filter logic for t156t.spras
+    Given a mseg record joined to t156t with spras = <spras>
+    When <spras> = 'E'
+    Then the record is processed
+    When <spras> != 'E'
+    Then the record is excluded
+
+    Examples:
+      | spras | expected_result |
+      | E     | processed       |
+      | D     | excluded        |
+      | F     | excluded        |
+
+  Scenario: Output results in Unity Catalog
+    Given the ETL logic is executed successfully
+    Then the results are available in purgo_databricks.purgo_playground.trf_inv_txn
+
+# END
