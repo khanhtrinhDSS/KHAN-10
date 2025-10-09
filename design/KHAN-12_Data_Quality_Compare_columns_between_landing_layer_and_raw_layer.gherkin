@@ -1,0 +1,111 @@
+Feature: Site Data Processing from Landing to Raw and Raw Reject Layers
+
+  Background:
+    Given the following tables exist in schema purgo_databricks.purgo_playground:
+      | Table Name                  | Columns                                                                                                   |
+      | landing_abc1234_1           | Clinical_Study_Source_Id (string, not null), Study_Country_source_id (string, not null),                 |
+      |                            | Study_Site_source_id (string, not null), site_number (bigint, not null),                                 |
+      |                            | site_status (string, nullable), primary_investigator_source_id (string, nullable)                        |
+      | raw_abc1234_1               | Clinical_Study_Source_Id (string, not null), Study_Country_source_id (string, not null),                 |
+      |                            | Study_Site_source_id (string, not null), site_number (bigint, not null),                                 |
+      |                            | site_status (string, nullable), primary_investigator_source_id (string, nullable)                        |
+      | raw_reject_abc1234_1        | Clinical_Study_Source_Id (string, nullable), Study_Country_source_id (string, nullable),                 |
+      |                            | Study_Site_source_id (string, nullable), raw_site_number (bigint, nullable),                             |
+      |                            | landing_site_number (bigint, nullable), error_message (string, nullable)                                 |
+    And the composite key for site records is (Clinical_Study_Source_Id, Study_Country_source_id, Study_Site_source_id)
+    And site_number is immutable for a given composite key once present in raw_abc1234_1
+
+  Scenario Outline: Process new site records from landing to raw layer
+    Given a record in landing_abc1234_1 with composite key <Clinical_Study_Source_Id>, <Study_Country_source_id>, <Study_Site_source_id>
+    And no record exists in raw_abc1234_1 with the same composite key
+    When the data pipeline processes the landing_abc1234_1 table
+    Then the record is inserted into raw_abc1234_1 with all columns copied as-is
+    And no record is inserted into raw_reject_abc1234_1
+
+    Examples:
+      | Clinical_Study_Source_Id | Study_Country_source_id | Study_Site_source_id | site_number | site_status | primary_investigator_source_id |
+      | "STUDY1"                | "US"                    | "SITE01"             | 1001        | "Active"    | "INV001"                      |
+      | "STUDY2"                | "CA"                    | "SITE02"             | 2002        | "Closed"    | "INV002"                      |
+
+  Scenario Outline: Process existing site records with matching site_number
+    Given a record in landing_abc1234_1 with composite key <Clinical_Study_Source_Id>, <Study_Country_source_id>, <Study_Site_source_id>
+    And a record exists in raw_abc1234_1 with the same composite key and site_number = <site_number>
+    When the data pipeline processes the landing_abc1234_1 table
+    Then the record is inserted or updated in raw_abc1234_1 with all columns from landing_abc1234_1
+    And no record is inserted into raw_reject_abc1234_1
+
+    Examples:
+      | Clinical_Study_Source_Id | Study_Country_source_id | Study_Site_source_id | site_number | site_status | primary_investigator_source_id |
+      | "STUDY1"                | "US"                    | "SITE01"             | 1001        | "Active"    | "INV001"                      |
+      | "STUDY3"                | "UK"                    | "SITE03"             | 3003        | "Active"    | "INV003"                      |
+
+  Scenario Outline: Reject site records with site_number mismatch
+    Given a record in landing_abc1234_1 with composite key <Clinical_Study_Source_Id>, <Study_Country_source_id>, <Study_Site_source_id> and site_number = <landing_site_number>
+    And a record exists in raw_abc1234_1 with the same composite key and site_number = <raw_site_number>
+    And <landing_site_number> != <raw_site_number>
+    When the data pipeline processes the landing_abc1234_1 table
+    Then the record is not inserted or updated in raw_abc1234_1
+    And a record is inserted into raw_reject_abc1234_1 with:
+      | Clinical_Study_Source_Id | Study_Country_source_id | Study_Site_source_id | raw_site_number | landing_site_number | error_message                                                                 |
+      | <Clinical_Study_Source_Id> | <Study_Country_source_id> | <Study_Site_source_id> | <raw_site_number> | <landing_site_number> | "Site number mismatch between landing and raw layer for composite key"         |
+
+    Examples:
+      | Clinical_Study_Source_Id | Study_Country_source_id | Study_Site_source_id | raw_site_number | landing_site_number |
+      | "STUDY1"                | "US"                    | "SITE01"             | 1001            | 9999               |
+      | "STUDY2"                | "CA"                    | "SITE02"             | 2002            | 2003               |
+
+  Scenario Outline: Validation - Required fields in landing_abc1234_1
+    Given a record in landing_abc1234_1 with missing or null <missing_field>
+    When the data pipeline processes the landing_abc1234_1 table
+    Then the record is rejected and not inserted into raw_abc1234_1
+    And a record is inserted into raw_reject_abc1234_1 with error_message "Missing required field: <missing_field>"
+
+    Examples:
+      | missing_field                  |
+      | Clinical_Study_Source_Id       |
+      | Study_Country_source_id        |
+      | Study_Site_source_id           |
+      | site_number                    |
+
+  Scenario Outline: Validation - Data type mismatch in landing_abc1234_1
+    Given a record in landing_abc1234_1 where <field> has invalid data type <invalid_value>
+    When the data pipeline processes the landing_abc1234_1 table
+    Then the record is rejected and not inserted into raw_abc1234_1
+    And a record is inserted into raw_reject_abc1234_1 with error_message "Invalid data type for field: <field>"
+
+    Examples:
+      | field                         | invalid_value   |
+      | site_number                   | "not_a_number"  |
+      | Clinical_Study_Source_Id      | 12345           |
+
+  Scenario: Deduplication - Multiple records for same composite key in landing_abc1234_1
+    Given multiple records in landing_abc1234_1 with the same composite key (Clinical_Study_Source_Id, Study_Country_source_id, Study_Site_source_id)
+    When the data pipeline processes the landing_abc1234_1 table
+    Then only the latest record (by landing batch order or timestamp if available) is considered for processing
+    And all other duplicates are ignored or rejected with error_message "Duplicate record for composite key in landing layer"
+
+  Scenario: Idempotency - Reprocessing the same landing batch
+    Given a record in landing_abc1234_1 that has already been processed to raw_abc1234_1 with the same values
+    When the data pipeline is rerun
+    Then no duplicate record is created in raw_abc1234_1
+    And no record is inserted into raw_reject_abc1234_1
+
+  Scenario: Update of non-key fields when site_number is unchanged
+    Given a record in landing_abc1234_1 with composite key matching a record in raw_abc1234_1 and site_number is the same
+    And site_status or primary_investigator_source_id has changed
+    When the data pipeline processes the landing_abc1234_1 table
+    Then the record in raw_abc1234_1 is updated with the new values for site_status and/or primary_investigator_source_id
+
+  Scenario: No action for records already rejected for site_number mismatch
+    Given a record in landing_abc1234_1 with composite key matching a record in raw_abc1234_1 but site_number mismatch
+    And the same record already exists in raw_reject_abc1234_1
+    When the data pipeline processes the landing_abc1234_1 table
+    Then no duplicate record is inserted into raw_reject_abc1234_1
+
+  Scenario: Null or missing optional fields
+    Given a record in landing_abc1234_1 with null site_status and/or primary_investigator_source_id
+    When the data pipeline processes the landing_abc1234_1 table
+    Then the record is processed as per normal rules (inserted/updated in raw_abc1234_1 or rejected for site_number mismatch)
+    And null values are preserved in raw_abc1234_1 or raw_reject_abc1234_1 as applicable
+
+# END
