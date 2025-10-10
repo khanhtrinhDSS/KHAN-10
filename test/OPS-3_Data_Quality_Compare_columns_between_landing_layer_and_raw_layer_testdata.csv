@@ -1,0 +1,28 @@
+### purgo_databricks.purgo_playground.landing_abc1234_1
+## Test Data Categories
+Clinical_Study_Source_Id,Study_Country_source_id,Study_Site_source_id,site_number,site_status,primary_investigator_source_id
+S1,C1,SS1,1001,Active,PI1
+S2,C2,SS2,2002,Closed,PI2
+S3,C3,SS3,3003,Active,PI3
+S4,C4,SS4,4004,Active,PI4
+S5,C5,SS5,5005,Active,PI5
+
+
+### purgo_databricks.purgo_playground.raw_abc1234_1
+## Test Data Categories
+Clinical_Study_Source_Id,Study_Country_source_id,Study_Site_source_id,site_number,site_status,primary_investigator_source_id
+S1,C1,SS1,1001,Active,PI1
+S2,C2,SS2,2003,Closed,PI2
+S4,C4,SS4,4004,Active,PI4
+S5,C5,SS5,5006,Active,PI5
+S7,C7,SS7,7007,Active,PI7
+
+
+### purgo_databricks.purgo_playground.raw_reject_abc1234_1
+## Test Data Categories
+Clinical_Study_Source_Id,Study_Country_source_id,Study_Site_source_id,raw_site_number,landing_site_number,error_message
+S2,C2,SS2,2003,2002,"Site number mismatch between landing and raw for given study/site/country combination"
+S5,C5,SS5,5006,5005,"Site number mismatch between landing and raw for given study/site/country combination"
+S8,C8,SS8,8009,8008,"Site number mismatch between landing and raw for given study/site/country combination"
+S10,C10,SS10,NULL,1010,"No matching raw record found for given study/site/country combination"
+S6,C6,SS6,NULL,6006,"No matching raw record found for given study/site/country combination"
