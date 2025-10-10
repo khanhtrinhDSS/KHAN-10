@@ -1,0 +1,115 @@
+Feature: Site Data Ingestion and Validation for abc1234-1
+
+  Background:
+    Given the following tables exist in purgo_databricks.purgo_playground:
+      | Table Name                    | Columns                                                                                   |
+      | landing_abc1234_1             | Clinical_Study_Source_Id, Study_Country_source_id, Study_Site_source_id, site_number, site_status, primary_investigator_source_id |
+      | raw_abc1234_1                 | Clinical_Study_Source_Id, Study_Country_source_id, Study_Site_source_id, site_number, site_status, primary_investigator_source_id |
+      | raw_reject_abc1234_1          | Clinical_Study_Source_Id, Study_Country_source_id, Study_Site_source_id, raw_site_number, landing_site_number, error_message      |
+    And the upsert key for raw_abc1234_1 is (Clinical_Study_Source_Id, Study_Country_source_id, Study_Site_source_id)
+    And all columns are of type string except site_number, raw_site_number, landing_site_number (bigint)
+
+  Scenario Outline: Process landing site data into raw or raw_reject layer
+    Given a record in landing_abc1234_1 with
+      | Clinical_Study_Source_Id   | Study_Country_source_id | Study_Site_source_id | site_number | site_status | primary_investigator_source_id |
+      | <Clinical_Study_Source_Id> | <Study_Country_source_id> | <Study_Site_source_id> | <landing_site_number> | <site_status> | <primary_investigator_source_id> |
+    And a record in raw_abc1234_1 with
+      | Clinical_Study_Source_Id   | Study_Country_source_id | Study_Site_source_id | site_number | site_status | primary_investigator_source_id |
+      | <raw_Clinical_Study_Source_Id> | <raw_Study_Country_source_id> | <raw_Study_Site_source_id> | <raw_site_number> | <raw_site_status> | <raw_primary_investigator_source_id> |
+    When the ingestion process runs
+    Then the result should be
+      | action         | target_table                | error_message                                                                                 |
+      | <action>       | <target_table>              | <error_message>                                                                               |
+    Examples:
+      | Clinical_Study_Source_Id | Study_Country_source_id | Study_Site_source_id | landing_site_number | site_status | primary_investigator_source_id | raw_Clinical_Study_Source_Id | raw_Study_Country_source_id | raw_Study_Site_source_id | raw_site_number | raw_site_status | raw_primary_investigator_source_id | action   | target_table                | error_message                                                                                 |
+      | S1                      | C1                      | SS1                  | 1001               | Active      | PI1                          | S1                        | C1                        | SS1                    | 1001           | Active         | PI1                              | insert   | raw_abc1234_1               |                                                                                              |
+      | S2                      | C2                      | SS2                  | 2002               | Closed      | PI2                          | S2                        | C2                        | SS2                    | 2003           | Closed         | PI2                              | reject   | raw_reject_abc1234_1        | Site number mismatch between landing and raw for given study/site/country combination         |
+      | S3                      | C3                      | SS3                  | 3003               | Active      | PI3                          |                           |                          |                        |                |                |                                   | insert   | raw_abc1234_1               |                                                                                              |
+      | S4                      | C4                      | SS4                  | 4004               | Active      | PI4                          | S4                        | C4                        | SS4                    | 4004           | Active         | PI4                              | insert   | raw_abc1234_1               |                                                                                              |
+      | S5                      | C5                      | SS5                  | 5005               | Active      | PI5                          | S5                        | C5                        | SS5                    | 5006           | Active         | PI5                              | reject   | raw_reject_abc1234_1        | Site number mismatch between landing and raw for given study/site/country combination         |
+      | S6                      | C6                      | SS6                  | 6006               | Closed      | PI6                          |                           |                          |                        |                |                |                                   | insert   | raw_abc1234_1               |                                                                                              |
+      | S7                      | C7                      | SS7                  | 7007               | Active      | PI7                          | S7                        | C7                        | SS7                    | 7007           | Active         | PI7                              | insert   | raw_abc1234_1               |                                                                                              |
+      | S8                      | C8                      | SS8                  | 8008               | Active      | PI8                          | S8                        | C8                        | SS8                    | 8009           | Active         | PI8                              | reject   | raw_reject_abc1234_1        | Site number mismatch between landing and raw for given study/site/country combination         |
+      | S9                      | C9                      | SS9                  | 9009               | Active      | PI9                          |                           |                          |                        |                |                |                                   | insert   | raw_abc1234_1               |                                                                                              |
+      | S10                     | C10                     | SS10                 | 1010               | Closed      | PI10                         | S10                       | C10                       | SS10                   | 1010           | Closed         | PI10                             | insert   | raw_abc1234_1               |                                                                                              |
+
+  Scenario: Reject record when site_number mismatch for existing key
+    Given a record in landing_abc1234_1 with Clinical_Study_Source_Id "S2", Study_Country_source_id "C2", Study_Site_source_id "SS2", site_number 2002
+    And a record in raw_abc1234_1 with Clinical_Study_Source_Id "S2", Study_Country_source_id "C2", Study_Site_source_id "SS2", site_number 2003
+    When the ingestion process runs
+    Then the record is inserted into raw_reject_abc1234_1 with
+      | Clinical_Study_Source_Id | Study_Country_source_id | Study_Site_source_id | raw_site_number | landing_site_number | error_message                                                                                 |
+      | S2                      | C2                      | SS2                  | 2003           | 2002               | Site number mismatch between landing and raw for given study/site/country combination         |
+
+  Scenario: Insert new entry into raw when key does not exist in raw
+    Given a record in landing_abc1234_1 with Clinical_Study_Source_Id "S3", Study_Country_source_id "C3", Study_Site_source_id "SS3", site_number 3003
+    And no record exists in raw_abc1234_1 with Clinical_Study_Source_Id "S3", Study_Country_source_id "C3", Study_Site_source_id "SS3"
+    When the ingestion process runs
+    Then the record is inserted into raw_abc1234_1
+
+  Scenario: Insert record into raw when site_number matches for existing key
+    Given a record in landing_abc1234_1 with Clinical_Study_Source_Id "S1", Study_Country_source_id "C1", Study_Site_source_id "SS1", site_number 1001
+    And a record in raw_abc1234_1 with Clinical_Study_Source_Id "S1", Study_Country_source_id "C1", Study_Site_source_id "SS1", site_number 1001
+    When the ingestion process runs
+    Then the record is inserted into raw_abc1234_1
+
+  Scenario Outline: Validation of required fields and types in landing_abc1234_1
+    Given a record in landing_abc1234_1 with
+      | Clinical_Study_Source_Id   | Study_Country_source_id | Study_Site_source_id | site_number | site_status | primary_investigator_source_id |
+      | <Clinical_Study_Source_Id> | <Study_Country_source_id> | <Study_Site_source_id> | <site_number> | <site_status> | <primary_investigator_source_id> |
+    When the ingestion process validates the record
+    Then the result should be
+      | valid | error_message                                 |
+      | <valid> | <error_message>                             |
+    Examples:
+      | Clinical_Study_Source_Id | Study_Country_source_id | Study_Site_source_id | site_number | site_status | primary_investigator_source_id | valid | error_message                                 |
+      | S1                      | C1                      | SS1                  | 1001        | Active      | PI1                          | true  |                                               |
+      |                        | C2                      | SS2                  | 2002        | Closed      | PI2                          | false | Clinical_Study_Source_Id is required           |
+      | S3                      |                         | SS3                  | 3003        | Active      | PI3                          | false | Study_Country_source_id is required            |
+      | S4                      | C4                      |                     | 4004        | Active      | PI4                          | false | Study_Site_source_id is required               |
+      | S5                      | C5                      | SS5                  |             | Active      | PI5                          | false | site_number is required                        |
+      | S6                      | C6                      | SS6                  | abc         | Closed      | PI6                          | false | site_number must be a bigint                   |
+      | S7                      | C7                      | SS7                  | 7007        |             | PI7                          | true  |                                               |
+      | S8                      | C8                      | SS8                  | 8008        | Active      |                               | true  |                                               |
+      | S9                      | C9                      | SS9                  | 9009        | Active      | PI9                          | true  |                                               |
+      | S10                     | C10                     | SS10                 | 1010        | Closed      | PI10                         | true  |                                               |
+
+  Scenario: Do not update or delete existing records in raw_abc1234_1
+    Given a record in raw_abc1234_1 with Clinical_Study_Source_Id "S1", Study_Country_source_id "C1", Study_Site_source_id "SS1", site_number 1001
+    And a record in landing_abc1234_1 with Clinical_Study_Source_Id "S1", Study_Country_source_id "C1", Study_Site_source_id "SS1", site_number 1001
+    When the ingestion process runs
+    Then the record is inserted into raw_abc1234_1
+    And no update or delete occurs in raw_abc1234_1
+
+  Scenario: Error handling for duplicate records in landing_abc1234_1
+    Given two records in landing_abc1234_1 with identical Clinical_Study_Source_Id "S1", Study_Country_source_id "C1", Study_Site_source_id "SS1", site_number 1001
+    When the ingestion process runs
+    Then both records are processed as per the rules (no deduplication required)
+
+  Scenario: Error handling for duplicate records in raw_abc1234_1
+    Given two records in raw_abc1234_1 with identical Clinical_Study_Source_Id "S1", Study_Country_source_id "C1", Study_Site_source_id "SS1", site_number 1001
+    When the ingestion process runs
+    Then the landing record is processed as per the rules (no deduplication required)
+
+  Scenario: Error handling for type mismatch in site_number
+    Given a record in landing_abc1234_1 with site_number "abc"
+    When the ingestion process validates the record
+    Then the result should be
+      | valid | error_message                 |
+      | false | site_number must be a bigint  |
+
+  Scenario: Error handling for missing required fields
+    Given a record in landing_abc1234_1 missing Clinical_Study_Source_Id
+    When the ingestion process validates the record
+    Then the result should be
+      | valid | error_message                                 |
+      | false | Clinical_Study_Source_Id is required           |
+
+  Scenario: Error handling for NULL values in required fields
+    Given a record in landing_abc1234_1 with NULL in Study_Country_source_id
+    When the ingestion process validates the record
+    Then the result should be
+      | valid | error_message                                 |
+      | false | Study_Country_source_id is required            |
+
+# END
